@@ -37,6 +37,16 @@ export function getMediaBucket(): R2Bucket | null {
   return env.MEDIA ?? null;
 }
 
+export function executionPeriods(date = new Date()) {
+  const singapore = new Date(date.getTime() + 8 * 60 * 60 * 1000);
+  const localDate = singapore.toISOString().slice(0,10);
+  const mondayOffset = (singapore.getUTCDay() + 6) % 7;
+  const monday = new Date(`${localDate}T00:00:00Z`);
+  monday.setUTCDate(monday.getUTCDate() - mondayOffset);
+  const sunday = new Date(monday); sunday.setUTCDate(sunday.getUTCDate() + 6);
+  return { weekStart: monday.toISOString().slice(0,10), weekEnd: sunday.toISOString().slice(0,10), month: localDate.slice(0,7), localDate };
+}
+
 export async function ensureSchema(db: D1Database) {
   await db.batch([
     db.prepare(`CREATE TABLE IF NOT EXISTS profiles (
@@ -53,13 +63,20 @@ export async function ensureSchema(db: D1Database) {
       title TEXT NOT NULL, area TEXT NOT NULL, stage TEXT NOT NULL,
       acceptance_criteria TEXT NOT NULL, status TEXT NOT NULL,
       progress INTEGER NOT NULL DEFAULT 0, next_action TEXT NOT NULL, deleted_at TEXT,
-      evidence TEXT NOT NULL DEFAULT '', completed_at TEXT
+      evidence TEXT NOT NULL DEFAULT '', completed_at TEXT,
+      evidence_review_status TEXT NOT NULL DEFAULT '', evidence_review_feedback TEXT NOT NULL DEFAULT '', evidence_score INTEGER NOT NULL DEFAULT 0
     )`),
     db.prepare(`CREATE TABLE IF NOT EXISTS monthly_outcomes (
       id TEXT PRIMARY KEY, user_id TEXT NOT NULL, title TEXT NOT NULL,
       acceptance_criteria TEXT NOT NULL, progress INTEGER NOT NULL DEFAULT 0,
       expected_hours INTEGER NOT NULL, status TEXT NOT NULL,
-      journey_id TEXT NOT NULL DEFAULT '', kind TEXT NOT NULL DEFAULT 'milestone', period TEXT NOT NULL DEFAULT ''
+      journey_id TEXT NOT NULL DEFAULT '', kind TEXT NOT NULL DEFAULT 'milestone', period TEXT NOT NULL DEFAULT '',
+      settled_at TEXT, rolled_from_id TEXT NOT NULL DEFAULT ''
+    )`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS weekly_cycles (
+      id TEXT PRIMARY KEY, user_id TEXT NOT NULL, week_start TEXT NOT NULL, week_end TEXT NOT NULL,
+      goal TEXT NOT NULL DEFAULT '', capacity_minutes INTEGER NOT NULL DEFAULT 420, status TEXT NOT NULL DEFAULT 'active',
+      completed_count INTEGER NOT NULL DEFAULT 0, total_count INTEGER NOT NULL DEFAULT 0, archived_at TEXT, created_at TEXT NOT NULL
     )`),
     db.prepare(`CREATE TABLE IF NOT EXISTS weekly_actions (
       id TEXT PRIMARY KEY, user_id TEXT NOT NULL, outcome_id TEXT NOT NULL,
@@ -67,7 +84,7 @@ export async function ensureSchema(db: D1Database) {
       scheduled_for TEXT NOT NULL, priority INTEGER NOT NULL,
       status TEXT NOT NULL, completed_at TEXT,
       task_type TEXT NOT NULL DEFAULT 'general', source TEXT NOT NULL DEFAULT 'manual',
-      is_side_hustle INTEGER NOT NULL DEFAULT 0
+      is_side_hustle INTEGER NOT NULL DEFAULT 0, cycle_id TEXT NOT NULL DEFAULT '', carried_from_id TEXT NOT NULL DEFAULT ''
     )`),
     db.prepare(`CREATE TABLE IF NOT EXISTS checkins (
       id TEXT PRIMARY KEY, user_id TEXT NOT NULL, type TEXT NOT NULL,
@@ -79,7 +96,8 @@ export async function ensureSchema(db: D1Database) {
       next_priority TEXT NOT NULL, created_at TEXT NOT NULL,
       health_check TEXT NOT NULL DEFAULT '', market_evidence TEXT NOT NULL DEFAULT '',
       energy_score INTEGER NOT NULL DEFAULT 7, decision TEXT NOT NULL DEFAULT 'continue',
-      kill_rule_count INTEGER NOT NULL DEFAULT 0
+      kill_rule_count INTEGER NOT NULL DEFAULT 0, week_start TEXT NOT NULL DEFAULT '',
+      auto_decision TEXT NOT NULL DEFAULT 'continue', auto_reasons TEXT NOT NULL DEFAULT '[]'
     )`),
     db.prepare(`CREATE TABLE IF NOT EXISTS task_outputs (
       id TEXT PRIMARY KEY, user_id TEXT NOT NULL, action_id TEXT NOT NULL,
@@ -108,6 +126,14 @@ export async function ensureSchema(db: D1Database) {
       id TEXT PRIMARY KEY, footprint_id TEXT NOT NULL, user_id TEXT NOT NULL,
       object_key TEXT NOT NULL, content_type TEXT NOT NULL, created_at TEXT NOT NULL
     )`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS evidence_events (
+      id TEXT PRIMARY KEY, user_id TEXT NOT NULL, source_type TEXT NOT NULL, source_id TEXT NOT NULL,
+      evidence_type TEXT NOT NULL, action_id TEXT NOT NULL DEFAULT '', occurred_at TEXT NOT NULL, created_at TEXT NOT NULL
+    )`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS stop_rule_events (
+      id TEXT PRIMARY KEY, user_id TEXT NOT NULL, week_start TEXT NOT NULL, rule_code TEXT NOT NULL,
+      severity TEXT NOT NULL, reason TEXT NOT NULL, created_at TEXT NOT NULL
+    )`),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_journeys_user_status ON journeys(user_id, status)"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_actions_user_status ON weekly_actions(user_id, status)"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_checkins_user_type ON checkins(user_id, type)"),
@@ -116,6 +142,10 @@ export async function ensureSchema(db: D1Database) {
     db.prepare("CREATE INDEX IF NOT EXISTS idx_english_user_date ON english_messages(user_id, created_at)"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_footprints_user_status ON footprints(user_id, status)"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_footprint_images_footprint ON footprint_images(footprint_id, user_id)"),
+    db.prepare("CREATE INDEX IF NOT EXISTS idx_weekly_cycles_user_start ON weekly_cycles(user_id, week_start)"),
+    db.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_evidence_source ON evidence_events(user_id, source_type, source_id)"),
+    db.prepare("CREATE INDEX IF NOT EXISTS idx_evidence_user_type_date ON evidence_events(user_id, evidence_type, occurred_at)"),
+    db.prepare("CREATE INDEX IF NOT EXISTS idx_stop_events_user_week ON stop_rule_events(user_id, week_start)"),
   ]);
 
   const journeyColumns = await db.prepare("PRAGMA table_info(journeys)").all<{ name: string }>();
@@ -124,6 +154,9 @@ export async function ensureSchema(db: D1Database) {
   }
   if (!journeyColumns.results.some((column) => column.name === "evidence")) await db.prepare("ALTER TABLE journeys ADD COLUMN evidence TEXT NOT NULL DEFAULT ''").run();
   if (!journeyColumns.results.some((column) => column.name === "completed_at")) await db.prepare("ALTER TABLE journeys ADD COLUMN completed_at TEXT").run();
+  if (!journeyColumns.results.some((column) => column.name === "evidence_review_status")) await db.prepare("ALTER TABLE journeys ADD COLUMN evidence_review_status TEXT NOT NULL DEFAULT ''").run();
+  if (!journeyColumns.results.some((column) => column.name === "evidence_review_feedback")) await db.prepare("ALTER TABLE journeys ADD COLUMN evidence_review_feedback TEXT NOT NULL DEFAULT ''").run();
+  if (!journeyColumns.results.some((column) => column.name === "evidence_score")) await db.prepare("ALTER TABLE journeys ADD COLUMN evidence_score INTEGER NOT NULL DEFAULT 0").run();
 
   const profileColumns = await db.prepare("PRAGMA table_info(profiles)").all<{ name: string }>();
   if (!profileColumns.results.some((column) => column.name === "weekly_capacity_minutes")) {
@@ -138,6 +171,8 @@ export async function ensureSchema(db: D1Database) {
   if (!outcomeColumns.results.some((column) => column.name === "journey_id")) await db.prepare("ALTER TABLE monthly_outcomes ADD COLUMN journey_id TEXT NOT NULL DEFAULT ''").run();
   if (!outcomeColumns.results.some((column) => column.name === "kind")) await db.prepare("ALTER TABLE monthly_outcomes ADD COLUMN kind TEXT NOT NULL DEFAULT 'milestone'").run();
   if (!outcomeColumns.results.some((column) => column.name === "period")) await db.prepare("ALTER TABLE monthly_outcomes ADD COLUMN period TEXT NOT NULL DEFAULT ''").run();
+  if (!outcomeColumns.results.some((column) => column.name === "settled_at")) await db.prepare("ALTER TABLE monthly_outcomes ADD COLUMN settled_at TEXT").run();
+  if (!outcomeColumns.results.some((column) => column.name === "rolled_from_id")) await db.prepare("ALTER TABLE monthly_outcomes ADD COLUMN rolled_from_id TEXT NOT NULL DEFAULT ''").run();
   const actionColumns = await db.prepare("PRAGMA table_info(weekly_actions)").all<{ name: string }>();
   if (!actionColumns.results.some((column) => column.name === "task_type")) {
     await db.prepare("ALTER TABLE weekly_actions ADD COLUMN task_type TEXT NOT NULL DEFAULT 'general'").run();
@@ -146,12 +181,17 @@ export async function ensureSchema(db: D1Database) {
     await db.prepare("ALTER TABLE weekly_actions ADD COLUMN source TEXT NOT NULL DEFAULT 'manual'").run();
   }
   if (!actionColumns.results.some((column) => column.name === "is_side_hustle")) await db.prepare("ALTER TABLE weekly_actions ADD COLUMN is_side_hustle INTEGER NOT NULL DEFAULT 0").run();
+  if (!actionColumns.results.some((column) => column.name === "cycle_id")) await db.prepare("ALTER TABLE weekly_actions ADD COLUMN cycle_id TEXT NOT NULL DEFAULT ''").run();
+  if (!actionColumns.results.some((column) => column.name === "carried_from_id")) await db.prepare("ALTER TABLE weekly_actions ADD COLUMN carried_from_id TEXT NOT NULL DEFAULT ''").run();
   const reviewColumns = await db.prepare("PRAGMA table_info(reviews)").all<{ name: string }>();
   if (!reviewColumns.results.some((column) => column.name === "health_check")) await db.prepare("ALTER TABLE reviews ADD COLUMN health_check TEXT NOT NULL DEFAULT ''").run();
   if (!reviewColumns.results.some((column) => column.name === "market_evidence")) await db.prepare("ALTER TABLE reviews ADD COLUMN market_evidence TEXT NOT NULL DEFAULT ''").run();
   if (!reviewColumns.results.some((column) => column.name === "energy_score")) await db.prepare("ALTER TABLE reviews ADD COLUMN energy_score INTEGER NOT NULL DEFAULT 7").run();
   if (!reviewColumns.results.some((column) => column.name === "decision")) await db.prepare("ALTER TABLE reviews ADD COLUMN decision TEXT NOT NULL DEFAULT 'continue'").run();
   if (!reviewColumns.results.some((column) => column.name === "kill_rule_count")) await db.prepare("ALTER TABLE reviews ADD COLUMN kill_rule_count INTEGER NOT NULL DEFAULT 0").run();
+  if (!reviewColumns.results.some((column) => column.name === "week_start")) await db.prepare("ALTER TABLE reviews ADD COLUMN week_start TEXT NOT NULL DEFAULT ''").run();
+  if (!reviewColumns.results.some((column) => column.name === "auto_decision")) await db.prepare("ALTER TABLE reviews ADD COLUMN auto_decision TEXT NOT NULL DEFAULT 'continue'").run();
+  if (!reviewColumns.results.some((column) => column.name === "auto_reasons")) await db.prepare("ALTER TABLE reviews ADD COLUMN auto_reasons TEXT NOT NULL DEFAULT '[]'").run();
   const financeColumns = await db.prepare("PRAGMA table_info(financial_records)").all<{ name: string }>();
   if (!financeColumns.results.some((column) => column.name === "income_type")) await db.prepare("ALTER TABLE financial_records ADD COLUMN income_type TEXT NOT NULL DEFAULT ''").run();
   if (!financeColumns.results.some((column) => column.name === "source_name")) await db.prepare("ALTER TABLE financial_records ADD COLUMN source_name TEXT NOT NULL DEFAULT ''").run();
@@ -186,6 +226,36 @@ const actionSeeds = [
   ["a3", "career", "列出10个重要职业项目", 60, "周六", 3, "general"],
   ["a4", "exercise", "完成3次运动", 135, "本周", 4, "exercise"],
 ] as const;
+
+export async function ensureExecutionCycles(db: D1Database, identity: WorkspaceIdentity) {
+  const now = new Date().toISOString();
+  const { weekStart,weekEnd,month } = executionPeriods();
+  const profile = await db.prepare("SELECT weekly_goal,weekly_capacity_minutes FROM profiles WHERE user_id=?").bind(identity.userId).first<{weekly_goal:string;weekly_capacity_minutes:number}>();
+  const cycleId = `${identity.userId}-week-${weekStart}`;
+  const existing = await db.prepare("SELECT id FROM weekly_cycles WHERE id=? AND user_id=?").bind(cycleId,identity.userId).first();
+  if (!existing) {
+    const previous = await db.prepare("SELECT id FROM weekly_cycles WHERE user_id=? AND status='active' ORDER BY week_start DESC LIMIT 1").bind(identity.userId).first<{id:string}>();
+    if (previous) {
+      const counts = await db.prepare("SELECT COUNT(*) AS total,SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END) AS completed FROM weekly_actions WHERE user_id=? AND cycle_id=?").bind(identity.userId,previous.id).first<{total:number;completed:number}>();
+      await db.prepare("UPDATE weekly_cycles SET status='archived',archived_at=?,total_count=?,completed_count=? WHERE id=? AND user_id=?").bind(now,Number(counts?.total??0),Number(counts?.completed??0),previous.id,identity.userId).run();
+    }
+    await db.prepare("INSERT INTO weekly_cycles (id,user_id,week_start,week_end,goal,capacity_minutes,status,created_at) VALUES (?,?,?,?,?,?,'active',?)").bind(cycleId,identity.userId,weekStart,weekEnd,profile?.weekly_goal||"",profile?.weekly_capacity_minutes||420,now).run();
+  }
+  await db.prepare("UPDATE weekly_actions SET cycle_id=? WHERE user_id=? AND cycle_id=''").bind(cycleId,identity.userId).run();
+  await db.prepare("UPDATE reviews SET week_start=? WHERE user_id=? AND week_start=''").bind(weekStart,identity.userId).run();
+
+  const currentOutcomes = await db.prepare("SELECT COUNT(*) AS total FROM monthly_outcomes WHERE user_id=? AND period=?").bind(identity.userId,month).first<{total:number}>();
+  if (!Number(currentOutcomes?.total??0)) {
+    const previousRows = await db.prepare("SELECT * FROM monthly_outcomes WHERE user_id=? AND period=(SELECT MAX(period) FROM monthly_outcomes WHERE user_id=? AND period<?) ORDER BY rowid").bind(identity.userId,identity.userId,month).all<{id:string;title:string;acceptance_criteria:string;expected_hours:number;journey_id:string;kind:string;progress:number}>();
+    const carry = previousRows.results.filter((item)=>Number(item.progress)<100);
+    if (previousRows.results.length) {
+      const updates = previousRows.results.map((item)=>db.prepare("UPDATE monthly_outcomes SET status=?,settled_at=? WHERE id=? AND user_id=?").bind(Number(item.progress)>=100?"completed":"rolled",now,item.id,identity.userId));
+      const inserts = carry.map((item)=>db.prepare("INSERT INTO monthly_outcomes (id,user_id,title,acceptance_criteria,progress,expected_hours,status,journey_id,kind,period,rolled_from_id) VALUES (?,?,?,?,0,?,'active',?,?,?,?)").bind(crypto.randomUUID(),identity.userId,item.title,item.acceptance_criteria,item.expected_hours,item.journey_id,item.kind,month,item.id));
+      await db.batch([...updates,...inserts]);
+    }
+  }
+  return { cycleId,weekStart,weekEnd,month };
+}
 
 export async function seedWorkspace(db: D1Database, identity: WorkspaceIdentity) {
   const now = new Date().toISOString();
@@ -238,4 +308,5 @@ export async function seedWorkspace(db: D1Database, identity: WorkspaceIdentity)
     db.prepare("UPDATE monthly_outcomes SET journey_id=?,kind='habit',period=? WHERE id=? AND journey_id=''").bind(`${identity.userId}-${visionJourneyImportId}-7`,currentPeriod,`${identity.userId}-english`),
     db.prepare("UPDATE monthly_outcomes SET journey_id=?,kind='milestone',period=? WHERE id=? AND journey_id=''").bind(`${identity.userId}-${visionJourneyImportId}-11`,currentPeriod,`${identity.userId}-career`),
   ]);
+  await ensureExecutionCycles(db,identity);
 }

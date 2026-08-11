@@ -1,4 +1,4 @@
-import { index, integer, real, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { index, integer, real, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 export const profiles = sqliteTable("profiles", {
   userId: text("user_id").primaryKey(),
@@ -30,6 +30,9 @@ export const journeys = sqliteTable(
     deletedAt: text("deleted_at"),
     evidence: text("evidence").notNull().default(""),
     completedAt: text("completed_at"),
+    evidenceReviewStatus: text("evidence_review_status").notNull().default(""),
+    evidenceReviewFeedback: text("evidence_review_feedback").notNull().default(""),
+    evidenceScore: integer("evidence_score").notNull().default(0),
   },
   (table) => [index("idx_journeys_user_status").on(table.userId, table.status)],
 );
@@ -45,7 +48,15 @@ export const monthlyOutcomes = sqliteTable("monthly_outcomes", {
   journeyId: text("journey_id").notNull().default(""),
   kind: text("kind").notNull().default("milestone"),
   period: text("period").notNull().default(""),
+  settledAt: text("settled_at"),
+  rolledFromId: text("rolled_from_id").notNull().default(""),
 });
+
+export const weeklyCycles = sqliteTable("weekly_cycles", {
+  id: text("id").primaryKey(), userId: text("user_id").notNull(), weekStart: text("week_start").notNull(), weekEnd: text("week_end").notNull(),
+  goal: text("goal").notNull().default(""), capacityMinutes: integer("capacity_minutes").notNull().default(420), status: text("status").notNull().default("active"),
+  completedCount: integer("completed_count").notNull().default(0), totalCount: integer("total_count").notNull().default(0), archivedAt: text("archived_at"), createdAt: text("created_at").notNull(),
+}, (table) => [index("idx_weekly_cycles_user_start").on(table.userId, table.weekStart)]);
 
 export const weeklyActions = sqliteTable(
   "weekly_actions",
@@ -62,6 +73,8 @@ export const weeklyActions = sqliteTable(
     taskType: text("task_type").notNull().default("general"),
     source: text("source").notNull().default("manual"),
     isSideHustle: integer("is_side_hustle", { mode: "boolean" }).notNull().default(false),
+    cycleId: text("cycle_id").notNull().default(""),
+    carriedFromId: text("carried_from_id").notNull().default(""),
   },
   (table) => [index("idx_actions_user_status").on(table.userId, table.status)],
 );
@@ -91,8 +104,21 @@ export const reviews = sqliteTable("reviews", {
   energyScore: integer("energy_score").notNull().default(7),
   decision: text("decision").notNull().default("continue"),
   killRuleCount: integer("kill_rule_count").notNull().default(0),
+  weekStart: text("week_start").notNull().default(""),
+  autoDecision: text("auto_decision").notNull().default("continue"),
+  autoReasons: text("auto_reasons").notNull().default("[]"),
   createdAt: text("created_at").notNull(),
 });
+
+export const evidenceEvents = sqliteTable("evidence_events", {
+  id: text("id").primaryKey(), userId: text("user_id").notNull(), sourceType: text("source_type").notNull(), sourceId: text("source_id").notNull(),
+  evidenceType: text("evidence_type").notNull(), actionId: text("action_id").notNull().default(""), occurredAt: text("occurred_at").notNull(), createdAt: text("created_at").notNull(),
+}, (table) => [uniqueIndex("idx_evidence_source").on(table.userId,table.sourceType,table.sourceId),index("idx_evidence_user_type_date").on(table.userId, table.evidenceType, table.occurredAt)]);
+
+export const stopRuleEvents = sqliteTable("stop_rule_events", {
+  id: text("id").primaryKey(), userId: text("user_id").notNull(), weekStart: text("week_start").notNull(), ruleCode: text("rule_code").notNull(),
+  severity: text("severity").notNull(), reason: text("reason").notNull(), createdAt: text("created_at").notNull(),
+}, (table) => [index("idx_stop_events_user_week").on(table.userId, table.weekStart)]);
 
 export const taskOutputs = sqliteTable("task_outputs", {
   id: text("id").primaryKey(), userId: text("user_id").notNull(), actionId: text("action_id").notNull(),

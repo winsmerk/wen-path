@@ -25,6 +25,9 @@ type Journey = {
   next_action: string;
   evidence: string;
   completed_at: string | null;
+  evidence_review_status: "" | "passed" | "needs_more";
+  evidence_review_feedback: string;
+  evidence_score: number;
 };
 
 type Outcome = {
@@ -36,7 +39,12 @@ type Outcome = {
   journey_id: string;
   kind: "habit" | "milestone";
   period: string;
+  status: "active" | "completed" | "rolled";
+  settled_at: string | null;
+  rolled_from_id: string;
 };
+
+type WeeklyCycle = { id:string;week_start:string;week_end:string;goal:string;capacity_minutes:number;status:"active"|"archived";completed_count:number;total_count:number;archived_at:string|null };
 
 type Action = {
   id: string;
@@ -47,8 +55,10 @@ type Action = {
   priority: number;
   status: "pending" | "completed" | "paused";
   task_type: "reading" | "finance" | "exercise" | "english" | "general";
-  source: "seed" | "ai" | "manual";
+  source: "seed" | "ai" | "manual" | "carried";
   is_side_hustle: number;
+  cycle_id:string;
+  carried_from_id:string;
 };
 
 type TaskOutput = { id: string; action_id: string; task_type: Action["task_type"]; title: string; content: string; duration: number; feeling: string; created_at: string };
@@ -75,6 +85,9 @@ type Review = {
   energy_score: number;
   decision: "continue" | "adjust" | "stop";
   kill_rule_count: number;
+  week_start:string;
+  auto_decision:"continue"|"adjust"|"stop";
+  auto_reasons:string;
   created_at: string;
 };
 
@@ -82,7 +95,11 @@ type Workspace = {
   profile: Profile;
   journeys: Journey[];
   outcomes: Outcome[];
+  outcomeHistory:Outcome[];
+  activeWeek:WeeklyCycle;
+  weeklyCycles:WeeklyCycle[];
   actions: Action[];
+  historyActions:Action[];
   checkins: Checkin[];
   reviews: Review[];
   taskOutputs: TaskOutput[];
@@ -90,6 +107,7 @@ type Workspace = {
   englishMessages: EnglishMessage[];
   footprints: Footprint[];
   footprintImages: FootprintImage[];
+  stopRuleEvents:Array<{id:string;week_start:string;rule_code:string;severity:"adjust"|"stop";reason:string;created_at:string}>;
 };
 
 type Tab = "today" | "vision" | "journeys" | "plan" | "records" | "finance" | "footprints" | "review";
@@ -176,8 +194,10 @@ export default function LifeOS() {
       body: JSON.stringify(payload),
     });
     if (!response.ok) {
-      const result = (await response.json()) as { error?: string };
-      setNotice(result.error === "active_limit" ? "同时最多激活5次征程，请先暂停一项。" : result.error === "stage_locked" ? "前一阶段尚未通关，暂时不能激活这项征程。" : result.error === "evidence_required" ? "请先提交完成证据。" : "保存失败，请稍后重试。");
+      const result = (await response.json()) as { error?: string;feedback?:string;score?:number };
+      const messages:Record<string,string>={active_limit:"同时最多激活5次征程，请先暂停一项。",stage_locked:"前一阶段尚未通关，暂时不能激活这项征程。",evidence_required:"请先提交完成证据。",evidence_needs_more:`AI验收未通过（${result.score??0}分）：${result.feedback||"请补充可验证证据。"}`,month_outcomes_full:"本月已经有5项成果，请先完成或调整现有成果。",month_not_ready:"每月25日后开放月末结算，避免过早放弃本月成果。",month_settled:"本月已经结算，请到下月继续规划。",already_carried:"这项任务已经结转到本周。"};
+      setNotice(result.error&&messages[result.error] ? messages[result.error] : "保存失败，请稍后重试。");
+      if(result.error==="evidence_needs_more")await load();
       setSaving(false);
       return false;
     }
@@ -244,7 +264,7 @@ export default function LifeOS() {
         )}
         {tab === "vision" && <Vision profile={workspace.profile} journeys={workspace.journeys} actions={workspace.actions} busy={saving} mutate={mutate} />}
         {tab === "journeys" && <Journeys items={workspace.journeys} busy={saving} mutate={mutate} />}
-        {tab === "plan" && <Plan profile={workspace.profile} journeys={workspace.journeys} outcomes={workspace.outcomes} actions={workspace.actions} reviews={workspace.reviews} busy={saving} mutate={mutate} onComplete={setCompletingAction} />}
+        {tab === "plan" && <Plan profile={workspace.profile} journeys={workspace.journeys} outcomes={workspace.outcomes} outcomeHistory={workspace.outcomeHistory} activeWeek={workspace.activeWeek} weeklyCycles={workspace.weeklyCycles} actions={workspace.actions} historyActions={workspace.historyActions} reviews={workspace.reviews} busy={saving} mutate={mutate} onComplete={setCompletingAction} />}
         {tab === "records" && <Records items={workspace.checkins} outputs={workspace.taskOutputs} messages={workspace.englishMessages} busy={saving} onCheckin={setCheckinType} mutate={mutate} />}
         {tab === "finance" && <Finance records={workspace.financialRecords} actions={workspace.actions} busy={saving} mutate={mutate} />}
         {tab === "footprints" && <Footprints items={workspace.footprints} images={workspace.footprintImages} onReload={load} />}
@@ -472,7 +492,7 @@ function Journeys({ items, busy, mutate }: { items: Journey[]; busy: boolean; mu
     <section className="journey-list">
       {visible.map((item) => <article key={item.id} className="journey-row">
         <div className="journey-number">{String(item.sequence_number).padStart(2, "0")}</div>
-        <div className="journey-copy"><div><span className={`area-pill ${areaTone[item.area] ?? "stone"}`}>{item.area}</span><span className={`status-text ${item.status}`}>{statusLabel(item.status)}</span></div><h3>{item.title}</h3><p>{item.acceptance_criteria}</p>{item.status === "active" && <small>下一步：{item.next_action}</small>}{item.status === "completed" && item.evidence && <small>完成证据：{item.evidence}</small>}</div>
+        <div className="journey-copy"><div><span className={`area-pill ${areaTone[item.area] ?? "stone"}`}>{item.area}</span><span className={`status-text ${item.status}`}>{statusLabel(item.status)}</span>{item.evidence_review_status==="passed"&&<span className="evidence-pass">AI验收 {item.evidence_score}分</span>}</div><h3>{item.title}</h3><p>{item.acceptance_criteria}</p>{item.status === "active" && <small>下一步：{item.next_action}</small>}{item.evidence_review_status==="needs_more"&&<small className="evidence-needs-more">验收待补充（{item.evidence_score}分）：{item.evidence_review_feedback}</small>}{item.status === "completed" && item.evidence && <small>完成证据：{item.evidence}</small>}</div>
         <div className="journey-action"><div className="journey-menu"><button onClick={() => setEditing(item)}>编辑</button>{item.status === "active" ? <><button disabled={busy} onClick={() => setCompleting(item)}>完成</button><button disabled={busy} onClick={() => mutate({ action: "journey-status", id: item.id, status: "paused" }, "征程已暂停，这不代表失败")}>暂停</button></> : item.status !== "completed" ? <button disabled={busy} onClick={() => mutate({ action: "journey-status", id: item.id, status: "active" }, "已加入当前阶段")}>激活</button> : null}</div>{item.status !== "planned" && <b>{item.progress}%</b>}</div>
       </article>)}
     </section>
@@ -486,32 +506,42 @@ function statusLabel(status: Journey["status"]) {
   return { active: "进行中", planned: "待开始", paused: "已暂停", completed: "已完成" }[status];
 }
 
-function Plan({ profile, journeys, outcomes, actions, reviews, busy, mutate, onComplete }: { profile: Profile; journeys: Journey[]; outcomes: Outcome[]; actions: Action[]; reviews: Review[]; busy: boolean; mutate: (payload: Record<string, unknown>, success?: string) => Promise<boolean>; onComplete: (action: Action) => void }) {
+function Plan({ profile, journeys, outcomes, outcomeHistory, activeWeek, weeklyCycles, actions, historyActions, reviews, busy, mutate, onComplete }: { profile: Profile; journeys: Journey[]; outcomes: Outcome[]; outcomeHistory:Outcome[];activeWeek:WeeklyCycle;weeklyCycles:WeeklyCycle[];actions: Action[];historyActions:Action[]; reviews: Review[]; busy: boolean; mutate: (payload: Record<string, unknown>, success?: string) => Promise<boolean>; onComplete: (action: Action) => void }) {
   const [adjusting, setAdjusting] = useState(false);
   const [settings, setSettings] = useState(false);
   const [creatingOutcome, setCreatingOutcome] = useState(false);
   const [editingOutcome, setEditingOutcome] = useState<Outcome | null>(null);
   const [creatingAction, setCreatingAction] = useState(false);
   const [editingAction, setEditingAction] = useState<Action | null>(null);
+  const [showHistory,setShowHistory]=useState(false);
+  const [confirmSettlement,setConfirmSettlement]=useState(false);
   const activeActions = actions.filter((item) => item.status !== "paused");
   const weeklyMinutes = activeActions.reduce((sum, item) => sum + item.estimated_minutes, 0);
   const weeklyHours = Math.round(weeklyMinutes / 6) / 10;
   const sideHustleMinutes = activeActions.filter((item)=>item.is_side_hustle).reduce((sum,item)=>sum+item.estimated_minutes,0);
   const latestReview = reviews[0];
   return <>
-    <PageHeader kicker="每周根据目标动态规划" title="本周计划"><div className="action-row"><button className="soft-button" onClick={() => setSettings(true)}>配置时间与目标</button><button className="soft-button" onClick={() => setAdjusting(true)}>帮我调整计划</button></div></PageHeader>
+    <PageHeader kicker={`${activeWeek?.week_start||"本周"} — ${activeWeek?.week_end||""}`} title="本周计划"><div className="action-row"><button className="soft-button" onClick={()=>setShowHistory(!showHistory)}>{showHistory?"返回本周":"历史周计划"}</button><button className="soft-button" onClick={() => setSettings(true)}>配置时间与目标</button><button className="soft-button" onClick={() => setAdjusting(true)}>帮我调整计划</button></div></PageHeader>
+    {showHistory&&<ExecutionHistory cycles={weeklyCycles.filter((cycle)=>cycle.status==="archived")} actions={historyActions} outcomes={outcomeHistory} busy={busy} mutate={mutate} />}
+    {!showHistory&&<>
     <section className="week-goal-card"><div><span className="eyebrow">本周目标</span><h3>{profile.weekly_goal || "还没有填写本周目标"}</h3><p>系统会保留约 15% 的时间余量；副业上限 {Math.round(profile.side_hustle_limit_minutes/6)/10}h，{profile.protected_day}不安排任务。</p></div><div><b>{Math.round(profile.weekly_capacity_minutes / 6) / 10}h</b><small>本周可用</small></div><button className="primary-button" disabled={busy} onClick={() => mutate({ action: "generate-week-plan" }, "已结合目标、成果和健康护栏生成本周计划")}>{busy ? "生成中…" : "✦ AI 生成计划"}</button></section>
-    {(weeklyMinutes>profile.weekly_capacity_minutes||sideHustleMinutes>profile.side_hustle_limit_minutes||latestReview?.decision==="stop"||latestReview?.energy_score<=4)&&<div className="guardrail-alert"><b>计划护栏已触发</b><span>{weeklyMinutes>profile.weekly_capacity_minutes?`当前安排超过可用时间 ${Math.round((weeklyMinutes-profile.weekly_capacity_minutes)/6)/10}h，建议重新生成或暂缓低优先级任务。`:sideHustleMinutes>profile.side_hustle_limit_minutes?"副业投入超过设定上限。":latestReview?.decision==="stop"?"最近复盘决定暂停商业方向。":"最近能量偏低，AI计划将自动减量。"}</span></div>}
+    {(weeklyMinutes>profile.weekly_capacity_minutes||sideHustleMinutes>profile.side_hustle_limit_minutes||latestReview?.auto_decision==="stop"||latestReview?.auto_decision==="adjust"||latestReview?.energy_score<=4)&&<div className="guardrail-alert"><b>计划护栏已触发</b><span>{weeklyMinutes>profile.weekly_capacity_minutes?`当前安排超过可用时间 ${Math.round((weeklyMinutes-profile.weekly_capacity_minutes)/6)/10}h，建议重新生成或暂缓低优先级任务。`:sideHustleMinutes>profile.side_hustle_limit_minutes?"副业投入超过设定上限。":latestReview?.auto_decision==="stop"?"自动停止规则已触发，本周不会生成副业任务。":latestReview?.auto_decision==="adjust"?"自动规则建议降低负载或先验证市场证据。":"最近能量偏低，AI计划将自动减量。"}</span></div>}
     <div className="plan-summary"><div><span>核心成果</span><b>{outcomes.length}</b><small>保持少而重要</small></div><div><span>预计投入</span><b>{outcomes.reduce((sum, item) => sum + item.expected_hours, 0)}h</b><small>由你配置本月容量</small></div><div><span>明确不做</span><b>3</b><small>课程、社群、重型副业</small></div></div>
     <section className="plan-layout">
-      <div><div className="section-heading"><div><span className="eyebrow">月度成果</span><h3>完成标准清晰，才算真正完成</h3></div><button className="soft-button" onClick={() => setCreatingOutcome(true)}>＋ 新增成果</button></div><div className="plan-outcomes">{outcomes.map((item, index) => <OutcomeCard item={item} index={index} key={item.id} onEdit={setEditingOutcome} />)}{outcomes.length === 0 && <div className="empty-list"><b>还没有月度成果</b><p>添加一项本月真正想完成的结果。</p></div>}</div></div>
+      <div><div className="section-heading"><div><span className="eyebrow">月度成果 · {outcomes[0]?.period||new Date().toISOString().slice(0,7)}</span><h3>完成标准清晰，才算真正完成</h3></div><div className="monthly-actions"><button className="soft-button" disabled={busy} onClick={()=>mutate({action:"generate-month-outcomes"},"AI已结合当前征程补充本月成果")}>✦ AI规划本月</button><button className={confirmSettlement?"danger-button confirm":"soft-button"} disabled={busy} onClick={()=>confirmSettlement?mutate({action:"settle-month"},"本月已结算，未完成成果已滚动到下月").then((ok)=>{if(ok)setConfirmSettlement(false);}):setConfirmSettlement(true)}>{confirmSettlement?"确认结算并滚动":"月末结算"}</button><button className="soft-button" onClick={() => setCreatingOutcome(true)}>＋ 新增成果</button></div></div><div className="plan-outcomes">{outcomes.map((item, index) => <OutcomeCard item={item} index={index} key={item.id} onEdit={item.status==="active"?setEditingOutcome:undefined} />)}{outcomes.length === 0 && <div className="empty-list"><b>还没有月度成果</b><p>让 AI 根据当前征程生成，或手动添加一项成果。</p></div>}</div></div>
       <div className="weekly-panel"><div className="section-heading"><div><span className="eyebrow">本周重点</span><h3>{actions.filter((item) => item.status === "completed").length}/{activeActions.length} 已完成</h3></div><div className="weekly-heading-actions"><span className="capacity-badge">{weeklyHours}h / {Math.round(profile.weekly_capacity_minutes / 6) / 10}h</span><button className="soft-button" onClick={() => setCreatingAction(true)}>＋ 新增任务</button></div></div>{actions.map((item) => <div key={item.id} className={`task-row ${item.status}`}><input aria-label={`${item.title}完成状态`} type="checkbox" checked={item.status === "completed"} disabled={busy || item.status === "paused"} onChange={() => item.status === "completed" ? mutate({ action: "toggle-action", id: item.id }, "已撤销完成") : onComplete(item)} /><span><b>{item.title}</b><small><i className={`task-type ${item.task_type}`}>{taskTypeLabel(item.task_type)}</i>{item.status === "paused" ? "本周暂缓" : `${item.scheduled_for} · ${item.estimated_minutes}分钟`}{item.source === "ai" ? " · AI生成" : item.source === "manual" ? " · 手动添加" : ""}</small></span><button type="button" className="task-edit" onClick={() => setEditingAction(item)}>编辑</button></div>)}</div>
     </section>
+    </>}
     {adjusting && <AdjustPlanDialog actions={actions} busy={busy} onClose={() => setAdjusting(false)} onAdjust={async (mode, message) => { const ok = await mutate({ action: "adjust-plan", mode }, message); if (ok) setAdjusting(false); }} />}
     {settings && <WeeklySettingsDialog profile={profile} busy={busy} onClose={() => setSettings(false)} onSave={async (capacityMinutes, goal, sideHustleLimitMinutes, protectedDay, generate) => { const ok = await mutate({ action: generate ? "generate-week-plan" : "weekly-settings", capacityMinutes, goal, sideHustleLimitMinutes, protectedDay }, generate ? "已按本周目标与生活护栏生成新计划" : "本周容量、目标与护栏已保存"); if (ok) setSettings(false); }} />}
     {(creatingOutcome || editingOutcome) && <OutcomeDialog item={editingOutcome ?? undefined} journeys={journeys} busy={busy} onClose={() => { setCreatingOutcome(false); setEditingOutcome(null); }} onSave={async (values) => { const ok = await mutate({ action: editingOutcome ? "update-outcome" : "add-outcome", id: editingOutcome?.id, ...values }, editingOutcome ? "月度成果已更新" : "月度成果已添加"); if (ok) { setCreatingOutcome(false); setEditingOutcome(null); } }} onDelete={editingOutcome ? async () => { const ok = await mutate({ action: "delete-outcome", id: editingOutcome.id }, "月度成果已删除，相关周任务已保留"); if (ok) setEditingOutcome(null); } : undefined} />}
     {(creatingAction || editingAction) && <WeeklyActionDialog item={editingAction ?? undefined} outcomes={outcomes} busy={busy} onClose={() => { setCreatingAction(false); setEditingAction(null); }} onSave={async (values) => { const ok = await mutate({ action: editingAction ? "update-weekly-action" : "add-weekly-action", id: editingAction?.id, ...values }, editingAction ? "周任务已更新" : "周任务已添加"); if (ok) { setCreatingAction(false); setEditingAction(null); } }} onDelete={editingAction ? async () => { const ok = await mutate({ action: "delete-weekly-action", id: editingAction.id }, "周任务已删除，已提交的成果记录仍会保留"); if (ok) setEditingAction(null); } : undefined} />}
   </>;
+}
+
+function ExecutionHistory({cycles,actions,outcomes,busy,mutate}:{cycles:WeeklyCycle[];actions:Action[];outcomes:Outcome[];busy:boolean;mutate:(payload:Record<string,unknown>,success?:string)=>Promise<boolean>}){
+  const months=[...new Set(outcomes.map((item)=>item.period))];
+  return <div className="execution-history"><section><div className="section-heading"><div><span className="eyebrow">周计划归档</span><h3>过去的计划不会再混入本周</h3></div></div>{cycles.length?cycles.map((cycle)=>{const rows=actions.filter((item)=>item.cycle_id===cycle.id);return <article className="history-cycle" key={cycle.id}><header><div><b>{cycle.week_start} — {cycle.week_end}</b><small>{cycle.goal||"未填写周目标"}</small></div><span>{cycle.completed_count}/{cycle.total_count} 完成</span></header><div>{rows.length?rows.map((item)=><div className="history-action" key={item.id}><span><b>{item.title}</b><small>{item.status==="completed"?"已完成":item.status==="paused"?"已暂缓":"未完成"} · {item.estimated_minutes}分钟</small></span>{item.status!=="completed"&&<button disabled={busy} onClick={()=>mutate({action:"carry-action",id:item.id},"任务已结转到本周")}>结转到本周</button>}</div>):<p>该周没有任务。</p>}</div></article>}):<div className="empty-list"><b>还没有历史周计划</b><p>进入下一自然周后，本周计划会自动归档。</p></div>}</section><section><div className="section-heading"><div><span className="eyebrow">月度成果历史</span><h3>结算结果与滚动来源</h3></div></div>{months.length?months.map((month)=><article className="history-month" key={month}><b>{month}</b><div>{outcomes.filter((item)=>item.period===month).map((item)=><span key={item.id}>{item.status==="completed"?"✓":"↗"} {item.title} · {item.progress}%</span>)}</div></article>):<div className="empty-list"><b>还没有月度归档</b><p>月末结算后会在这里保留成果历史。</p></div>}</section></div>;
 }
 
 function taskTypeLabel(type: Action["task_type"]) { return { reading: "阅读", finance: "财务", exercise: "运动", english: "英语", general: "通用" }[type]; }
@@ -740,18 +770,17 @@ function ReviewPanel({ completedActions, actionTotal, exerciseCount, englishCoun
   const [energyScore, setEnergyScore] = useState(7);
   const [nextPriority, setNextPriority] = useState("");
   const [decision, setDecision] = useState<Review["decision"]>("continue");
-  const [killRuleCount, setKillRuleCount] = useState(0);
   async function submit(event: FormEvent) {
     event.preventDefault();
-    const ok = await mutate({ action: "review", achievement, lowValue, healthCheck, marketEvidence, energyScore, nextPriority, decision, killRuleCount }, "周复盘已保存，AI 将按健康与停止规则调整下周计划");
-    if (ok) { setAchievement(""); setLowValue(""); setHealthCheck(""); setMarketEvidence(""); setEnergyScore(7); setNextPriority(""); setDecision("continue"); setKillRuleCount(0); }
+    const ok = await mutate({ action: "review", achievement, lowValue, healthCheck, marketEvidence, energyScore, nextPriority, decision }, "周复盘已保存，系统已自动检查停止规则");
+    if (ok) { setAchievement(""); setLowValue(""); setHealthCheck(""); setMarketEvidence(""); setEnergyScore(7); setNextPriority(""); setDecision("continue"); }
   }
   return <>
     <PageHeader kicker="把真实生活带回计划" title="本周复盘"><span className="capacity-badge">约 8 分钟</span></PageHeader>
     <div className="review-metrics"><div><span>行动完成</span><b>{completedActions}/{actionTotal}</b></div><div><span>运动次数</span><b>{exerciseCount}</b></div><div><span>英语练习</span><b>{englishCount}</b></div><div><span>负载状态</span><b className="healthy">可持续</b></div></div>
     <section className="review-layout">
-      <form className="review-form" onSubmit={submit}><label><span>1 · 本周最重要的成果是什么？</span><textarea required value={achievement} onChange={(event) => setAchievement(event.target.value)} /></label><label><span>2 · 哪件事消耗很大但价值较低？</span><textarea value={lowValue} onChange={(event) => setLowValue(event.target.value)} /></label><label><span>3 · 睡眠、健康、英语或关系是否被挤压？</span><textarea required value={healthCheck} onChange={(event)=>setHealthCheck(event.target.value)} placeholder="写事实；能量过低会自动降低下周负载…" /></label><label><span>4 · 本周获得了什么真实市场证据？</span><textarea required value={marketEvidence} onChange={(event)=>setMarketEvidence(event.target.value)} placeholder="用户反馈、付费、面试、作品数据；没有也请写“暂无”…" /></label><div className="field-grid"><label><span>5 · 当前能量：{energyScore}/10</span><input className="range-input" type="range" min="1" max="10" value={energyScore} onChange={(event)=>setEnergyScore(Number(event.target.value))} /></label><label><span>触发停止规则</span><input type="number" min="0" max="7" value={killRuleCount} onChange={(event)=>setKillRuleCount(Number(event.target.value))} /></label></div><label><span>6 · 下周唯一必须推进的里程碑是什么？</span><textarea required value={nextPriority} onChange={(event) => setNextPriority(event.target.value)} /></label><label><span>7 · 继续、调整还是停止？</span><select value={decision} onChange={(event)=>setDecision(event.target.value as Review["decision"])}><option value="continue">继续</option><option value="adjust">调整方向或范围</option><option value="stop">停止商业方向</option></select></label><button className="primary-button" disabled={busy}>{busy ? "正在保存…" : "保存七问复盘"}<span>→</span></button></form>
-      <aside className="review-draft"><span className="ai-mark">✦</span><span className="eyebrow">复盘护栏</span><h3>先看数据，再做取舍</h3><div><b>客观数据</b><p>本周完成 {completedActions}/{actionTotal} 项重点，记录运动 {exerciseCount} 次、英语 {englishCount} 次。</p></div><div><b>系统规则</b><p>能量≤4时下周容量降至65%、副业上限减半；选择“停止”时不再生成副业任务。</p></div><small>复盘不会替你做决定，但决定会真实影响下一次 AI 计划。</small>{reviews[0] && <div className="last-review"><b>最近决定 · {{continue:"继续",adjust:"调整",stop:"停止"}[reviews[0].decision]}</b><p>{reviews[0].next_priority}</p></div>}</aside>
+      <form className="review-form" onSubmit={submit}><label><span>1 · 本周最重要的成果是什么？</span><textarea required value={achievement} onChange={(event) => setAchievement(event.target.value)} /></label><label><span>2 · 哪件事消耗很大但价值较低？</span><textarea value={lowValue} onChange={(event) => setLowValue(event.target.value)} /></label><label><span>3 · 睡眠、健康、英语或关系是否被挤压？</span><textarea required value={healthCheck} onChange={(event)=>setHealthCheck(event.target.value)} placeholder="写事实；系统会结合连续两周数据判断…" /></label><label><span>4 · 本周获得了什么真实市场证据？</span><textarea required value={marketEvidence} onChange={(event)=>setMarketEvidence(event.target.value)} placeholder="用户反馈、付费、面试、作品数据；没有也请写“暂无”…" /></label><label><span>5 · 当前能量：{energyScore}/10</span><input className="range-input" type="range" min="1" max="10" value={energyScore} onChange={(event)=>setEnergyScore(Number(event.target.value))} /></label><label><span>6 · 下周唯一必须推进的里程碑是什么？</span><textarea required value={nextPriority} onChange={(event) => setNextPriority(event.target.value)} /></label><label><span>7 · 继续、调整还是停止？</span><select value={decision} onChange={(event)=>setDecision(event.target.value as Review["decision"])}><option value="continue">继续</option><option value="adjust">调整方向或范围</option><option value="stop">停止商业方向</option></select></label><button className="primary-button" disabled={busy}>{busy ? "正在分析规则…" : "保存并自动判断"}<span>→</span></button></form>
+      <aside className="review-draft"><span className="ai-mark">✦</span><span className="eyebrow">自动停止规则</span><h3>连续数据决定是否继续</h3><div><b>客观数据</b><p>本周完成 {completedActions}/{actionTotal} 项重点，记录运动 {exerciseCount} 次、英语 {englishCount} 次。</p></div><div><b>系统规则</b><p>连续两周低能量或健康承压会自动减量；连续三周无市场证据要求调整，四周则建议停止。</p></div>{reviews[0]&&<><div className={`auto-decision ${reviews[0].auto_decision}`}><b>系统判断 · {{continue:"继续",adjust:"调整",stop:"停止"}[reviews[0].auto_decision]}</b><p>{reviews[0].kill_rule_count?`触发 ${reviews[0].kill_rule_count} 条规则`:`未触发停止规则`} · {reviews[0].next_priority}</p></div>{reviews[0].kill_rule_count>0&&<div><b>触发原因</b><p>{(() => { try{return (JSON.parse(reviews[0].auto_reasons) as Array<{reason:string}>).map((item)=>item.reason).join("；");}catch{return "已触发自动规则";} })()}</p></div>}</>}</aside>
     </section>
   </>;
 }
@@ -759,9 +788,9 @@ function ReviewPanel({ completedActions, actionTotal, exerciseCount, englishCoun
 const journeyAreas = ["健康", "英语", "职业", "收入", "财务与资产", "关系与家庭", "探索与生活"];
 
 function JourneyCompleteDialog({ journey, busy, onClose, onSubmit }: { journey: Journey; busy: boolean; onClose: () => void; onSubmit: (evidence: string) => void }) {
-  const [evidence,setEvidence]=useState("");
+  const [evidence,setEvidence]=useState(journey.evidence||"");
   // eslint-disable-next-line jsx-a11y/no-static-element-interactions
-  return <div className="dialog-backdrop" onMouseDown={(event)=>{if(event.target===event.currentTarget)onClose();}}><form className="dialog" onSubmit={(event)=>{event.preventDefault();onSubmit(evidence);}}><button type="button" className="dialog-close" onClick={onClose}>×</button><span className="eyebrow">征程 {String(journey.sequence_number).padStart(2,"0")}</span><h2>提交完成证据</h2><p>{journey.acceptance_criteria}</p><label><span>成果或验证证据</span><textarea required maxLength={3000} value={evidence} onChange={(event)=>setEvidence(event.target.value)} placeholder="写下已经完成的结果、数据、链接或关键结论……" /></label><button className="primary-button full" disabled={busy||!evidence.trim()}>{busy?"提交中…":"确认完成并检查解锁"}</button></form></div>;
+  return <div className="dialog-backdrop" onMouseDown={(event)=>{if(event.target===event.currentTarget)onClose();}}><form className="dialog" onSubmit={(event)=>{event.preventDefault();onSubmit(evidence);}}><button type="button" className="dialog-close" onClick={onClose}>×</button><span className="eyebrow">征程 {String(journey.sequence_number).padStart(2,"0")}</span><h2>提交完成证据</h2><p>AI将严格对照验收标准：{journey.acceptance_criteria}</p>{journey.evidence_review_status==="needs_more"&&<div className="evidence-review-note"><b>上次验收 {journey.evidence_score}分</b><span>{journey.evidence_review_feedback}</span></div>}<label><span>成果或验证证据</span><textarea required maxLength={3000} value={evidence} onChange={(event)=>setEvidence(event.target.value)} placeholder="写下已经完成的结果、数据、链接或关键结论……" /></label><button className="primary-button full" disabled={busy||!evidence.trim()}>{busy?"AI验收中…":"提交并由AI验收"}</button></form></div>;
 }
 
 function OutcomeDialog({ item, journeys, busy, onClose, onSave, onDelete }: { item?: Outcome; journeys: Journey[]; busy: boolean; onClose: () => void; onSave: (values: Record<string, unknown>) => void; onDelete?: () => void }) {
