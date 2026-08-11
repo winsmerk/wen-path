@@ -1,5 +1,6 @@
 import { env } from "cloudflare:workers";
 import { headers } from "next/headers";
+import { vision40, visionJourneyImportId, visionJourneySeeds } from "@/lib/vision-journeys";
 
 export type WorkspaceIdentity = {
   userId: string;
@@ -143,24 +144,6 @@ export async function ensureSchema(db: D1Database) {
   await db.prepare("PRAGMA optimize").run();
 }
 
-const vision =
-  "40岁时，身体健康有力量；拥有足够好的英语和职业能力，可以选择在哪里生活、和谁工作；收入不依赖单一雇主；有能力经营家庭，也持续探索世界。最重要的是，在大多数普通日子里，我喜欢自己的生活。";
-
-const journeySeeds = [
-  [1, "建立真实财务基线", "财务与资产", "完成净资产表、月支出与应急金标准", "整理现金、固定资产、投资和固定支出"],
-  [2, "建立可持续运动节奏", "健康", "连续4周每周运动至少3次", "完成本周第一次力量训练"],
-  [3, "留下英语口语基准", "英语", "完成3分钟英文自我介绍录音", "写出英文自我介绍提纲"],
-  [4, "整理职业项目地图", "职业", "列出10个项目并选出5个案例", "列出最重要的10个项目"],
-  [5, "确定未来一年职业主线", "职业", "明确两项核心能力及90天验证项目", "评估当前能力差距"],
-  [6, "完成第一个中英文案例", "职业", "形成可用于面试的双语案例", "选择最有代表性的项目"],
-  [7, "验证一个AI工作流", "职业", "交付一个可演示的AI应用案例", "记录工作中的重复流程"],
-  [8, "获得第一笔技术服务收入", "收入", "获得非工资技术收入并完成复盘", "定义一个可售卖的小服务"],
-  [9, "建立关系复盘习惯", "关系与家庭", "完成4次非评分类关系事件复盘", "记录一次重要沟通"],
-  [10, "设计年度探索预算", "探索与生活", "确定年度地点、时间与预算边界", "列出三个想探索的地方"],
-  [11, "完成一次全英文模拟面试", "英语", "完成45分钟模拟并形成改进清单", "整理常见项目问题"],
-  [12, "形成个人能力仪表盘", "职业", "建立可季度更新的能力基线", "列出10项关键能力"],
-] as const;
-
 const outcomeSeeds = [
   ["finance", "看清真实财务底盘", "完成净资产表、真实月支出和12个月应急金标准", 25, 5],
   ["exercise", "完成12次运动", "最低可接受10次，保持恢复良好", 17, 8],
@@ -181,27 +164,22 @@ export async function seedWorkspace(db: D1Database, identity: WorkspaceIdentity)
     `INSERT OR IGNORE INTO profiles
       (user_id, display_name, vision, target_date, initialized, created_at, updated_at)
       VALUES (?, ?, ?, ?, 0, ?, ?)`,
-  ).bind(identity.userId, identity.displayName, vision, "2034-08-11", now, now).run();
+  ).bind(identity.userId, identity.displayName, vision40, "2034-08-11", now, now).run();
 
-  const journeyStatements = journeySeeds.map((item) => {
-    const [sequence, title, area, acceptance, nextAction] = item;
-    return db.prepare(
-      `INSERT OR IGNORE INTO journeys
+  const importMarkerId = `${identity.userId}-${visionJourneyImportId}-100`;
+  const imported = await db.prepare("SELECT id FROM journeys WHERE id=? AND user_id=?").bind(importMarkerId, identity.userId).first();
+  if (!imported) {
+    const journeyStatements = visionJourneySeeds.map(([sequence, title, area, stage, acceptance, nextAction]) => db.prepare(
+      `INSERT INTO journeys
         (id, user_id, sequence_number, title, area, stage, acceptance_criteria, status, progress, next_action)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).bind(
-      `${identity.userId}-journey-${sequence}`,
-      identity.userId,
-      sequence,
-      title,
-      area,
-      sequence <= 6 ? "建立基线" : "能力突破",
-      acceptance,
-      sequence <= 5 ? "active" : "planned",
-      sequence === 1 ? 25 : sequence === 2 ? 17 : sequence === 3 ? 8 : 0,
-      nextAction,
-    );
-  });
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
+    ).bind(`${identity.userId}-${visionJourneyImportId}-${sequence}`, identity.userId, sequence, title, area, stage, acceptance, sequence <= 5 ? "active" : "planned", nextAction));
+    await db.batch([
+      db.prepare("DELETE FROM journeys WHERE user_id=?").bind(identity.userId),
+      db.prepare("UPDATE profiles SET vision=?,updated_at=? WHERE user_id=?").bind(vision40, now, identity.userId),
+      ...journeyStatements,
+    ]);
+  }
 
   const outcomeStatements = outcomeSeeds.map(([id, title, acceptance, progress, hours]) =>
     db.prepare(
@@ -219,12 +197,11 @@ export async function seedWorkspace(db: D1Database, identity: WorkspaceIdentity)
     ).bind(`${identity.userId}-${id}`, identity.userId, `${identity.userId}-${outcomeId}`, title, minutes, day, priority, taskType),
   );
 
-  await db.batch([...journeyStatements, ...outcomeStatements, ...actionStatements]);
+  await db.batch([...outcomeStatements, ...actionStatements]);
   await db.batch([
     db.prepare("UPDATE weekly_actions SET task_type = 'finance', source = 'seed', title = '整理现金、固定资产、投资、收入与固定支出' WHERE id = ?").bind(`${identity.userId}-a1`),
     db.prepare("UPDATE weekly_actions SET task_type = 'english', source = 'seed' WHERE id = ? AND task_type = 'general'").bind(`${identity.userId}-a2`),
     db.prepare("UPDATE weekly_actions SET source = 'seed' WHERE id = ?").bind(`${identity.userId}-a3`),
     db.prepare("UPDATE weekly_actions SET task_type = 'exercise', source = 'seed' WHERE id = ? AND task_type = 'general'").bind(`${identity.userId}-a4`),
-    db.prepare("UPDATE journeys SET next_action = '整理现金、固定资产、投资和固定支出' WHERE id = ?").bind(`${identity.userId}-journey-1`),
   ]);
 }

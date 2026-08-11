@@ -26,11 +26,12 @@ test("renders the LifeOS application shell", async () => {
 
 test("ships product metadata, adaptive planning, and database declaration", async () => {
   const { readFile } = await import("node:fs/promises");
-  const [layout, page, lifeOS, workspaceApi, hosting] = await Promise.all([
+  const [layout, page, lifeOS, workspaceApi, visionJourneys, hosting] = await Promise.all([
     readFile(new URL("app/layout.tsx", templateRoot), "utf8"),
     readFile(new URL("app/page.tsx", templateRoot), "utf8"),
     readFile(new URL("app/LifeOS.tsx", templateRoot), "utf8"),
     readFile(new URL("app/api/workspace/route.ts", templateRoot), "utf8"),
+    readFile(new URL("lib/vision-journeys.ts", templateRoot), "utf8"),
     readFile(new URL(".openai/hosting.json", templateRoot), "utf8"),
   ]);
   assert.match(layout, /const title = "wen flow · Build a life you love\."/);
@@ -56,6 +57,8 @@ test("ships product metadata, adaptive planning, and database declaration", asyn
   assert.match(workspaceApi, /update-weekly-action/);
   assert.match(workspaceApi, /delete-weekly-action/);
   assert.match(workspaceApi, /note_required/);
+  assert.equal([...visionJourneys.matchAll(/^\s+\[\d+,/gm)].length, 100);
+  assert.match(visionJourneys, /完成40岁人生复盘与下一阶段愿景/);
   assert.match(hosting, /"d1": "DB"/);
   assert.match(hosting, /"r2": "MEDIA"/);
 });
