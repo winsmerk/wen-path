@@ -26,7 +26,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 3px
 .app-shell { min-height: 100vh; }
 .sidebar { position: fixed; inset: 0 auto 0 0; width: 244px; padding: 30px 22px 24px; display: flex; flex-direction: column; z-index: 20; background: #fafbf7; border-right: 1px solid var(--line); }
 .brand { display: flex; align-items: center; gap: 13px; min-height: 52px; }
-.brand-mark { width: 52px; height: 52px; display: grid; place-items: center; flex: none; border-radius: 50%; background: #39725f; color: white; font-family: Georgia, "Songti SC", serif; font-size: 26px; }
+.brand-seed { width: 34px; height: 34px; display: grid; place-items: center; flex: none; border-radius: 50% 50% 44% 56%; color: white; background: #264f72; font-family: Georgia, serif; font-size: 22px; line-height: 1; transform: rotate(-7deg); }
 .brand strong, .brand small { display: block; }
 .brand strong { color: #22332d; font-family: Georgia, "Songti SC", serif; font-size: 28px; font-weight: 600; letter-spacing: -.035em; line-height: 1; }
 .brand small { margin-top: 8px; color: #77857f; font-size: 9px; letter-spacing: .08em; white-space: nowrap; }

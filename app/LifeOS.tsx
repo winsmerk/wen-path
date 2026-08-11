@@ -263,7 +263,7 @@ export default function LifeOS() {
 }
 
 function Brand() {
-  return <div className="brand"><span className="brand-mark">W</span><span className="brand-copy"><strong>wen flow</strong><small>Build a life you love.</small></span></div>;
+  return <div className="brand"><span className="brand-seed">W</span><span className="brand-copy"><strong>wen flow</strong><small>Build a life you love.</small></span></div>;
 }
 
 function MobileHeader() {
@@ -459,7 +459,7 @@ function OpenStreetFootprintMap({ items, selectedId, onSelect, onEdit }: { items
 
     void import("leaflet").then((L) => {
       if (cancelled) return;
-      map = L.map(element, { zoomControl: true }).setView([28, 105], 3);
+      map = L.map(element, { zoomControl: true, zoomSnap: 0.1, zoomDelta: 0.5 }).setView([28, 105], 3);
       L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
         maxZoom: 19,
         attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
@@ -523,7 +523,7 @@ function OpenStreetFootprintMap({ items, selectedId, onSelect, onEdit }: { items
       if (selectedBounds.isValid()) {
         window.requestAnimationFrame(() => {
           map?.invalidateSize();
-          map?.fitBounds(selectedBounds, { padding: [18, 18], maxZoom: 18, animate: false });
+          map?.fitBounds(selectedBounds, { padding: [8, 8], maxZoom: 18, animate: false });
           selectedLayer?.openPopup();
         });
       }
