@@ -521,8 +521,11 @@ function OpenStreetFootprintMap({ items, selectedId, onSelect, onEdit }: { items
 
       if (bounds.isValid()) map.fitBounds(bounds, { padding: [30, 30], maxZoom: 8 });
       if (selectedBounds.isValid()) {
-        map.fitBounds(selectedBounds, { paddingTopLeft: [50, 85], paddingBottomRight: [50, 50], maxZoom: 11 });
-        selectedLayer?.openPopup();
+        window.requestAnimationFrame(() => {
+          map?.invalidateSize();
+          map?.fitBounds(selectedBounds, { padding: [18, 18], maxZoom: 18, animate: false });
+          selectedLayer?.openPopup();
+        });
       }
     });
 
