@@ -46,7 +46,7 @@ type Action = {
 type TaskOutput = { id: string; action_id: string; task_type: Action["task_type"]; title: string; content: string; duration: number; feeling: string; created_at: string };
 type FinancialRecord = { id: string; action_id: string | null; category: "cash" | "fixed_asset" | "investment" | "property" | "income" | "fixed_expense" | "daily_expense" | "social_expense" | "exercise_expense" | "learning_expense"; amount: number; note: string; recorded_at: string };
 type EnglishMessage = { id: string; role: "user" | "assistant"; text: string; feedback: string; created_at: string };
-type Footprint = { id: string; name: string; status: "visited" | "wishlist"; content: string; visited_at: string | null; latitude: number | null; longitude: number | null; geometry_json: string | null; created_at: string; updated_at: string };
+type Footprint = { id: string; name: string; status: "visited" | "wishlist"; content: string; visited_at: string | null; latitude: number | null; longitude: number | null; geometry_json: string | null; geometry_version: number; created_at: string; updated_at: string };
 type FootprintImage = { id: string; footprint_id: string };
 
 type Checkin = {
@@ -544,7 +544,7 @@ function Footprints({ items, images, onReload }: { items: Footprint[]; images: F
   const visitedCount = items.filter((item) => item.status === "visited").length;
   const wishlistCount = items.filter((item) => item.status === "wishlist").length;
   useEffect(() => {
-    const missing = items.find((item) => item.latitude === null && !attemptedGeocodes.current.has(item.id));
+    const missing = items.find((item) => (item.latitude === null || item.geometry_version < 2) && !attemptedGeocodes.current.has(item.id));
     if (!missing || geocoding) return;
     attemptedGeocodes.current.add(missing.id);
     setGeocoding(missing.id);

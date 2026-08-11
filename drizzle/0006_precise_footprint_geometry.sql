@@ -1,0 +1,1 @@
+ALTER TABLE footprints ADD COLUMN geometry_version INTEGER NOT NULL DEFAULT 0;

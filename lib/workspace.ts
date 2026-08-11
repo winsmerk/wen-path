@@ -90,6 +90,7 @@ export async function ensureSchema(db: D1Database) {
       id TEXT PRIMARY KEY, user_id TEXT NOT NULL, name TEXT NOT NULL,
       status TEXT NOT NULL, content TEXT NOT NULL, visited_at TEXT,
       latitude REAL, longitude REAL, geometry_json TEXT,
+      geometry_version INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL, updated_at TEXT NOT NULL
     )`),
     db.prepare(`CREATE TABLE IF NOT EXISTS footprint_images (
@@ -134,6 +135,9 @@ export async function ensureSchema(db: D1Database) {
   }
   if (!footprintColumns.results.some((column) => column.name === "geometry_json")) {
     await db.prepare("ALTER TABLE footprints ADD COLUMN geometry_json TEXT").run();
+  }
+  if (!footprintColumns.results.some((column) => column.name === "geometry_version")) {
+    await db.prepare("ALTER TABLE footprints ADD COLUMN geometry_version INTEGER NOT NULL DEFAULT 0").run();
   }
 
   await db.prepare("PRAGMA optimize").run();
