@@ -112,8 +112,8 @@ export async function POST(request: Request) {
     if ((task.task_type === "reading" || task.task_type === "english") && !content) return NextResponse.json({ error: "output_required" }, { status: 400 });
     if (task.task_type === "exercise" && (!duration || !feeling)) return NextResponse.json({ error: "output_required" }, { status: 400 });
     if (task.task_type === "finance") {
-      const category = clean(body.category, 30), amount = Number(body.amount);
-      if (!["cash", "fixed_asset", "investment", "property", "income", "fixed_expense"].includes(category) || !Number.isFinite(amount) || amount < 0) return NextResponse.json({ error: "finance_required" }, { status: 400 });
+      const category = clean(body.category, 30), descriptionOnly = category === "fixed_asset" || category === "property", amount = descriptionOnly ? 0 : Number(body.amount);
+      if (!["cash", "fixed_asset", "investment", "property", "income", "fixed_expense"].includes(category) || !Number.isFinite(amount) || amount < 0 || (descriptionOnly && !content)) return NextResponse.json({ error: "finance_required" }, { status: 400 });
       await db.prepare("INSERT INTO financial_records (id,user_id,action_id,category,amount,note,recorded_at,created_at) VALUES (?,?,?,?,?,?,?,?)").bind(crypto.randomUUID(), identity.userId, task.id, category, amount, content || task.title, clean(body.recordedAt, 10) || now.slice(0, 10), now).run();
     }
     await db.prepare("INSERT INTO task_outputs (id,user_id,action_id,task_type,title,content,duration,feeling,created_at) VALUES (?,?,?,?,?,?,?,?,?)").bind(crypto.randomUUID(), identity.userId, task.id, task.task_type, task.title, content, duration, feeling, now).run();
@@ -154,9 +154,15 @@ export async function POST(request: Request) {
     else if (body.mode === "restore-paused") await db.prepare("UPDATE weekly_actions SET status='pending' WHERE user_id=? AND status='paused'").bind(identity.userId).run();
     else return NextResponse.json({error:"invalid_adjustment"},{status:400});
   } else if (body.action === "financial-record") {
-    const category = clean(body.category, 30), amount = Number(body.amount), actionId = clean(body.actionId, 80) || null;
-    if (!["cash","fixed_asset","investment","property","income","fixed_expense"].includes(category) || !Number.isFinite(amount) || amount < 0) return NextResponse.json({error:"invalid_finance"},{status:400});
-    await db.prepare("INSERT INTO financial_records (id,user_id,action_id,category,amount,note,recorded_at,created_at) VALUES (?,?,?,?,?,?,?,?)").bind(crypto.randomUUID(),identity.userId,actionId,category,amount,clean(body.note,400),clean(body.recordedAt,10)||now.slice(0,10),now).run();
+    const category = clean(body.category, 30), descriptionOnly = category === "fixed_asset" || category === "property", amount = descriptionOnly ? 0 : Number(body.amount), actionId = clean(body.actionId, 80) || null, note = clean(body.note, 400);
+    if (!["cash","fixed_asset","investment","property","income","fixed_expense"].includes(category) || !Number.isFinite(amount) || amount < 0 || (descriptionOnly && !note)) return NextResponse.json({error:"invalid_finance"},{status:400});
+    await db.prepare("INSERT INTO financial_records (id,user_id,action_id,category,amount,note,recorded_at,created_at) VALUES (?,?,?,?,?,?,?,?)").bind(crypto.randomUUID(),identity.userId,actionId,category,amount,note,clean(body.recordedAt,10)||now.slice(0,10),now).run();
+  } else if (body.action === "update-financial-record" && typeof body.id === "string") {
+    const category = clean(body.category, 30), descriptionOnly = category === "fixed_asset" || category === "property", amount = descriptionOnly ? 0 : Number(body.amount), actionId = clean(body.actionId, 80) || null, note = clean(body.note, 400);
+    if (!["cash","fixed_asset","investment","property","income","fixed_expense"].includes(category) || !Number.isFinite(amount) || amount < 0 || (descriptionOnly && !note)) return NextResponse.json({error:"invalid_finance"},{status:400});
+    await db.prepare("UPDATE financial_records SET action_id=?,category=?,amount=?,note=?,recorded_at=? WHERE id=? AND user_id=?").bind(actionId,category,amount,note,clean(body.recordedAt,10)||now.slice(0,10),body.id,identity.userId).run();
+  } else if (body.action === "delete-financial-record" && typeof body.id === "string") {
+    await db.prepare("DELETE FROM financial_records WHERE id=? AND user_id=?").bind(body.id,identity.userId).run();
   } else if (body.action === "english-coach") {
     const message = clean(body.message,1200); if (!message) return NextResponse.json({error:"missing_message"},{status:400});
     const ai = await askOpenAI(`用户正在练习英语。用户说：${message}\n请用JSON回答，字段 reply（自然的英文回复）和 feedback（中文点评，包含一个改进建议）。`);
