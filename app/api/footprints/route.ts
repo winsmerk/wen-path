@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { ensureSchema, getD1, getMediaBucket, getWorkspaceIdentity } from "@/lib/workspace";
+import { geocodePlace } from "@/lib/geocode";
 
 export const dynamic = "force-dynamic";
 
@@ -36,14 +37,19 @@ export async function POST(request: Request) {
 
   const now = new Date().toISOString();
   const id = suppliedId || crypto.randomUUID();
+  let geography: Awaited<ReturnType<typeof geocodePlace>> = null;
   if (suppliedId) {
-    const existing = await db.prepare("SELECT id FROM footprints WHERE id=? AND user_id=?").bind(id, identity.userId).first();
+    const existing = await db.prepare("SELECT id,name,latitude,longitude,geometry_json FROM footprints WHERE id=? AND user_id=?").bind(id, identity.userId).first<{ id: string; name: string; latitude: number | null; longitude: number | null; geometry_json: string | null }>();
     if (!existing) return NextResponse.json({ error: "not_found" }, { status: 404 });
-    await db.prepare("UPDATE footprints SET name=?,status=?,content=?,visited_at=?,updated_at=? WHERE id=? AND user_id=?")
-      .bind(name, status, content, visitedAt, now, id, identity.userId).run();
+    geography = existing.name === name && existing.latitude !== null && existing.longitude !== null
+      ? { latitude: existing.latitude, longitude: existing.longitude, geometryJson: existing.geometry_json }
+      : await geocodePlace(name);
+    await db.prepare("UPDATE footprints SET name=?,status=?,content=?,visited_at=?,latitude=?,longitude=?,geometry_json=?,updated_at=? WHERE id=? AND user_id=?")
+      .bind(name, status, content, visitedAt, geography?.latitude ?? null, geography?.longitude ?? null, geography?.geometryJson ?? null, now, id, identity.userId).run();
   } else {
-    await db.prepare("INSERT INTO footprints (id,user_id,name,status,content,visited_at,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)")
-      .bind(id, identity.userId, name, status, content, visitedAt, now, now).run();
+    geography = await geocodePlace(name);
+    await db.prepare("INSERT INTO footprints (id,user_id,name,status,content,visited_at,latitude,longitude,geometry_json,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)")
+      .bind(id, identity.userId, name, status, content, visitedAt, geography?.latitude ?? null, geography?.longitude ?? null, geography?.geometryJson ?? null, now, now).run();
   }
 
   if (media && files.length) {

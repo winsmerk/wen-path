@@ -89,6 +89,7 @@ export async function ensureSchema(db: D1Database) {
     db.prepare(`CREATE TABLE IF NOT EXISTS footprints (
       id TEXT PRIMARY KEY, user_id TEXT NOT NULL, name TEXT NOT NULL,
       status TEXT NOT NULL, content TEXT NOT NULL, visited_at TEXT,
+      latitude REAL, longitude REAL, geometry_json TEXT,
       created_at TEXT NOT NULL, updated_at TEXT NOT NULL
     )`),
     db.prepare(`CREATE TABLE IF NOT EXISTS footprint_images (
@@ -123,6 +124,16 @@ export async function ensureSchema(db: D1Database) {
   }
   if (!actionColumns.results.some((column) => column.name === "source")) {
     await db.prepare("ALTER TABLE weekly_actions ADD COLUMN source TEXT NOT NULL DEFAULT 'manual'").run();
+  }
+  const footprintColumns = await db.prepare("PRAGMA table_info(footprints)").all<{ name: string }>();
+  if (!footprintColumns.results.some((column) => column.name === "latitude")) {
+    await db.prepare("ALTER TABLE footprints ADD COLUMN latitude REAL").run();
+  }
+  if (!footprintColumns.results.some((column) => column.name === "longitude")) {
+    await db.prepare("ALTER TABLE footprints ADD COLUMN longitude REAL").run();
+  }
+  if (!footprintColumns.results.some((column) => column.name === "geometry_json")) {
+    await db.prepare("ALTER TABLE footprints ADD COLUMN geometry_json TEXT").run();
   }
 
   await db.prepare("PRAGMA optimize").run();

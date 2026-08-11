@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useState } from "react";
+import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 
 type Profile = {
   display_name: string;
@@ -46,7 +46,7 @@ type Action = {
 type TaskOutput = { id: string; action_id: string; task_type: Action["task_type"]; title: string; content: string; duration: number; feeling: string; created_at: string };
 type FinancialRecord = { id: string; action_id: string | null; category: "cash" | "fixed_asset" | "investment" | "property" | "income" | "fixed_expense" | "daily_expense" | "social_expense" | "exercise_expense" | "learning_expense"; amount: number; note: string; recorded_at: string };
 type EnglishMessage = { id: string; role: "user" | "assistant"; text: string; feedback: string; created_at: string };
-type Footprint = { id: string; name: string; status: "visited" | "wishlist"; content: string; visited_at: string | null; created_at: string; updated_at: string };
+type Footprint = { id: string; name: string; status: "visited" | "wishlist"; content: string; visited_at: string | null; latitude: number | null; longitude: number | null; geometry_json: string | null; created_at: string; updated_at: string };
 type FootprintImage = { id: string; footprint_id: string };
 
 type Checkin = {
@@ -448,23 +448,94 @@ function EnglishCoach({ messages, busy, mutate }: { messages: EnglishMessage[]; 
   return <section className="english-coach"><div className="section-heading"><div><span className="eyebrow">English Coach</span><h3>对话、纠正与口语训练</h3></div>{latestReply && <button className="soft-button" onClick={() => speak(latestReply.text)}>▶ 播放回复</button>}</div><div className="chat-log">{messages.length ? messages.slice(-8).map((item) => <div key={item.id} className={`chat-bubble ${item.role}`}><b>{item.role === "user" ? "You" : "Coach"}</b><p>{item.text}</p>{item.feedback && <small>{item.feedback}</small>}</div>) : <div className="empty-list"><b>Start with one sentence.</b><p>Try: “This week, I want to…”</p></div>}</div><form className="coach-input" onSubmit={submit}><textarea value={message} onChange={(event) => setMessage(event.target.value)} placeholder="用英语输入，或点击麦克风开始口语…" /><div><button type="button" className="soft-button" onClick={listen}>{listening ? "正在聆听…" : "◉ 开始口语"}</button><button className="primary-button" disabled={busy || !message.trim()}>发送给 Coach</button></div></form></section>;
 }
 
+function OpenStreetFootprintMap({ items, selectedId, onSelect }: { items: Footprint[]; selectedId: string; onSelect: (id: string) => void }) {
+  const elementRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const element = elementRef.current;
+    if (!element) return;
+    let cancelled = false;
+    let map: import("leaflet").Map | undefined;
+
+    void import("leaflet").then((L) => {
+      if (cancelled) return;
+      map = L.map(element, { zoomControl: true }).setView([28, 105], 3);
+      L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        maxZoom: 19,
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+      }).addTo(map);
+
+      const bounds = L.latLngBounds([]);
+      items.forEach((item) => {
+        if (item.latitude === null || item.longitude === null) return;
+        const selected = item.id === selectedId;
+        const visited = item.status === "visited";
+        const style: import("leaflet").PathOptions = {
+          color: visited ? (selected ? "#ff5a00" : "#ffad00") : (selected ? "#2d72ff" : "#7d918a"),
+          weight: selected ? 5 : visited ? 3 : 2,
+          fillColor: visited ? (selected ? "#ff6a00" : "#ffd43b") : "#9cadb3",
+          fillOpacity: visited ? (selected ? 0.72 : 0.42) : (selected ? 0.24 : 0.08),
+          opacity: selected ? 1 : 0.9,
+          dashArray: visited ? undefined : "7 7",
+        };
+        let layer: import("leaflet").Layer;
+        if (item.geometry_json) {
+          try {
+            const geometry = JSON.parse(item.geometry_json) as GeoJSON.GeoJsonObject;
+            layer = L.geoJSON(geometry, {
+              style,
+              pointToLayer: (_feature, latlng) => L.circle(latlng, { ...style, radius: selected ? 38000 : 26000 }),
+            });
+          } catch {
+            layer = L.circle([item.latitude, item.longitude], { ...style, radius: selected ? 38000 : 26000 });
+          }
+        } else {
+          layer = L.circle([item.latitude, item.longitude], { ...style, radius: selected ? 38000 : 26000 });
+        }
+        layer.addTo(map!);
+        layer.bindTooltip(`${visited ? "已去过" : "想去"} · ${item.name}`, { sticky: true });
+        layer.on("click", () => onSelect(item.id));
+        const layerBounds = "getBounds" in layer ? (layer as import("leaflet").FeatureGroup | import("leaflet").Circle).getBounds() : L.latLngBounds([[item.latitude, item.longitude]]);
+        bounds.extend(layerBounds);
+      });
+
+      if (bounds.isValid()) map.fitBounds(bounds, { padding: [30, 30], maxZoom: 8 });
+    });
+
+    return () => { cancelled = true; map?.remove(); };
+  }, [items, onSelect, selectedId]);
+
+  return <div ref={elementRef} className="footprint-map" aria-label="OpenStreetMap 足迹地图" />;
+}
+
 function Footprints({ items, images, onReload }: { items: Footprint[]; images: FootprintImage[]; onReload: () => Promise<void> }) {
   const [filter, setFilter] = useState<"all" | "visited" | "wishlist">("all");
   const [selectedId, setSelectedId] = useState("");
   const [editing, setEditing] = useState<Footprint | "new" | null>(null);
+  const [geocoding, setGeocoding] = useState("");
+  const attemptedGeocodes = useRef(new Set<string>());
   const visible = filter === "all" ? items : items.filter((item) => item.status === filter);
   const selected = items.find((item) => item.id === selectedId) ?? visible[0] ?? items[0];
   const selectedImages = selected ? images.filter((image) => image.footprint_id === selected.id) : [];
   const visitedCount = items.filter((item) => item.status === "visited").length;
   const wishlistCount = items.filter((item) => item.status === "wishlist").length;
-  const mapQuery = encodeURIComponent(selected?.name || "世界");
+  useEffect(() => {
+    const missing = items.find((item) => item.latitude === null && !attemptedGeocodes.current.has(item.id));
+    if (!missing || geocoding) return;
+    attemptedGeocodes.current.add(missing.id);
+    setGeocoding(missing.id);
+    void fetch("/api/footprint-geocode", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: missing.id }) })
+      .then((response) => response.ok ? onReload() : undefined)
+      .finally(() => window.setTimeout(() => setGeocoding(""), 1100));
+  }, [geocoding, items, onReload]);
   return <>
     <PageHeader kicker="把世界变成生活的证据" title="我的足迹"><button className="primary-button" onClick={() => setEditing("new")}>＋ 留下足迹</button></PageHeader>
     <div className="footprint-summary"><div><b>{visitedCount}</b><span>已点亮</span></div><div><b>{wishlistCount}</b><span>想去的地方</span></div><p>去过的地方会点亮为实心坐标，想去的地方会保留为下一段旅程。</p></div>
     <section className="footprint-layout">
       <div className="map-panel">
-        <iframe title={selected ? `${selected.name} Google 地图` : "Google 地图"} src={`https://www.google.com/maps?q=${mapQuery}&output=embed`} loading="lazy" referrerPolicy="no-referrer-when-downgrade" />
-        <div className={selected?.status === "visited" ? "map-place lit" : "map-place"}><span>⌖</span><div><small>{selected?.status === "visited" ? "已点亮" : "未来想去"}</small><b>{selected?.name || "添加第一处足迹"}</b></div></div>
+        <OpenStreetFootprintMap items={items} selectedId={selected?.id ?? ""} onSelect={setSelectedId} />
+        {geocoding && <div className="map-loading">正在解析地图区域…</div>}
+        <div className="map-legend"><span><i className="visited" />已去过</span><span><i className="selected" />当前选中</span><span><i className="wishlist" />想去</span></div>
       </div>
       <aside className="footprint-side">
         <div className="filter-row"><button className={filter === "all" ? "active" : ""} onClick={() => setFilter("all")}>全部</button><button className={filter === "visited" ? "active" : ""} onClick={() => setFilter("visited")}>已去过</button><button className={filter === "wishlist" ? "active" : ""} onClick={() => setFilter("wishlist")}>想去</button></div>
@@ -491,7 +562,7 @@ function FootprintDialog({ item, onClose, onSaved }: { item?: Footprint; onClose
   }
   async function remove() { if (!item) return; setBusy(true); const response = await fetch(`/api/footprints?id=${encodeURIComponent(item.id)}`, { method: "DELETE" }); setBusy(false); if (response.ok) await onSaved(); }
   // eslint-disable-next-line jsx-a11y/label-has-associated-control
-  return <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><form className="dialog footprint-dialog" onSubmit={submit}><button type="button" className="dialog-close" onClick={onClose}>×</button><span className="eyebrow">旅行足迹</span><h2>{item ? "编辑足迹" : "留下一个地方"}</h2><p>地点名称将用于 Google 地图定位。</p><label><span>地点</span><input required value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：京都，日本" /></label><label><span>状态</span><div className="duration-row"><button type="button" className={status === "visited" ? "active" : ""} onClick={() => setStatus("visited")}>已去过 · 点亮</button><button type="button" className={status === "wishlist" ? "active" : ""} onClick={() => setStatus("wishlist")}>未来想去</button></div></label>{status === "visited" && <label><span>到访日期</span><input type="date" required value={visitedAt} onChange={(event) => setVisitedAt(event.target.value)} /></label>}<label><span>足迹内容</span><textarea value={content} onChange={(event) => setContent(event.target.value)} placeholder="发生了什么？为什么记得这里？" /></label><label><span>上传图片（最多6张，每张不超过8MB）</span><input className="file-input" type="file" accept="image/*" multiple onChange={(event) => setFiles(Array.from(event.target.files ?? []).slice(0, 6))} />{files.length > 0 && <small className="file-note">已选择 {files.length} 张图片</small>}</label><div className="dialog-actions">{item ? <button type="button" className={confirmDelete ? "danger-button confirm" : "danger-button"} disabled={busy} onClick={() => confirmDelete ? remove() : setConfirmDelete(true)}>{confirmDelete ? "再次点击确认删除" : "删除足迹"}</button> : <span />}<button className="primary-button" disabled={busy}>{busy ? "正在保存…" : "保存足迹"}</button></div></form></div>;
+  return <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><form className="dialog footprint-dialog" onSubmit={submit}><button type="button" className="dialog-close" onClick={onClose}>×</button><span className="eyebrow">旅行足迹</span><h2>{item ? "编辑足迹" : "留下一个地方"}</h2><p>地点名称将用于 OpenStreetMap 定位并绘制区域。</p><label><span>地点</span><input required value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：京都，日本" /></label><label><span>状态</span><div className="duration-row"><button type="button" className={status === "visited" ? "active" : ""} onClick={() => setStatus("visited")}>已去过 · 点亮</button><button type="button" className={status === "wishlist" ? "active" : ""} onClick={() => setStatus("wishlist")}>未来想去</button></div></label>{status === "visited" && <label><span>到访日期</span><input type="date" required value={visitedAt} onChange={(event) => setVisitedAt(event.target.value)} /></label>}<label><span>足迹内容</span><textarea value={content} onChange={(event) => setContent(event.target.value)} placeholder="发生了什么？为什么记得这里？" /></label><label><span>上传图片（最多6张，每张不超过8MB）</span><input className="file-input" type="file" accept="image/*" multiple onChange={(event) => setFiles(Array.from(event.target.files ?? []).slice(0, 6))} />{files.length > 0 && <small className="file-note">已选择 {files.length} 张图片</small>}</label><div className="dialog-actions">{item ? <button type="button" className={confirmDelete ? "danger-button confirm" : "danger-button"} disabled={busy} onClick={() => confirmDelete ? remove() : setConfirmDelete(true)}>{confirmDelete ? "再次点击确认删除" : "删除足迹"}</button> : <span />}<button className="primary-button" disabled={busy}>{busy ? "正在保存…" : "保存足迹"}</button></div></form></div>;
 }
 
 function Finance({ records, actions, busy, mutate }: { records: FinancialRecord[]; actions: Action[]; busy: boolean; mutate: (payload: Record<string, unknown>, success?: string) => Promise<boolean> }) {

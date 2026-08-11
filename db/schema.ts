@@ -1,4 +1,4 @@
-import { index, integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { index, integer, real, sqliteTable, text } from "drizzle-orm/sqlite-core";
 
 export const profiles = sqliteTable("profiles", {
   userId: text("user_id").primaryKey(),
@@ -97,7 +97,8 @@ export const englishMessages = sqliteTable("english_messages", {
 
 export const footprints = sqliteTable("footprints", {
   id: text("id").primaryKey(), userId: text("user_id").notNull(), name: text("name").notNull(), status: text("status").notNull(),
-  content: text("content").notNull(), visitedAt: text("visited_at"), createdAt: text("created_at").notNull(), updatedAt: text("updated_at").notNull(),
+  content: text("content").notNull(), visitedAt: text("visited_at"), latitude: real("latitude"), longitude: real("longitude"),
+  geometryJson: text("geometry_json"), createdAt: text("created_at").notNull(), updatedAt: text("updated_at").notNull(),
 });
 export const footprintImages = sqliteTable("footprint_images", {
   id: text("id").primaryKey(), footprintId: text("footprint_id").notNull(), userId: text("user_id").notNull(), objectKey: text("object_key").notNull(),
