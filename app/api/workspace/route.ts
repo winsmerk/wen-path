@@ -148,6 +148,23 @@ export async function POST(request: Request) {
   } else if (body.action === "weekly-settings") {
     const capacity = Math.max(60, Math.min(2400, Number(body.capacityMinutes) || 420)), goal = clean(body.goal, 500);
     await db.prepare("UPDATE profiles SET weekly_capacity_minutes = ?, weekly_goal = ?, updated_at = ? WHERE user_id = ?").bind(capacity, goal, now, identity.userId).run();
+  } else if (body.action === "add-outcome" || body.action === "update-outcome") {
+    const title = clean(body.title, 100), acceptance = clean(body.acceptanceCriteria, 500);
+    const progress = Math.round(Math.max(0, Math.min(100, Number(body.progress) || 0))), hours = Math.round(Math.max(1, Math.min(200, Number(body.expectedHours) || 1)));
+    if (!title || !acceptance) return NextResponse.json({ error: "missing_fields" }, { status: 400 });
+    if (body.action === "add-outcome") await db.prepare("INSERT INTO monthly_outcomes (id,user_id,title,acceptance_criteria,progress,expected_hours,status) VALUES (?,?,?,?,?,?,'active')").bind(crypto.randomUUID(),identity.userId,title,acceptance,progress,hours).run();
+    else if (typeof body.id === "string") await db.prepare("UPDATE monthly_outcomes SET title=?,acceptance_criteria=?,progress=?,expected_hours=? WHERE id=? AND user_id=?").bind(title,acceptance,progress,hours,body.id,identity.userId).run();
+    else return NextResponse.json({ error: "missing_id" }, { status: 400 });
+  } else if (body.action === "delete-outcome" && typeof body.id === "string") {
+    await db.batch([db.prepare("UPDATE weekly_actions SET outcome_id='' WHERE user_id=? AND outcome_id=?").bind(identity.userId,body.id),db.prepare("DELETE FROM monthly_outcomes WHERE id=? AND user_id=?").bind(body.id,identity.userId)]);
+  } else if (body.action === "add-weekly-action" || body.action === "update-weekly-action") {
+    const title = clean(body.title, 120), outcomeId = clean(body.outcomeId, 100), scheduledFor = clean(body.scheduledFor, 12) || "本周";
+    const minutes = Math.max(15, Math.min(600, Number(body.estimatedMinutes) || 30)), taskType = clean(body.taskType, 20);
+    if (!title || !["reading","finance","exercise","english","general"].includes(taskType)) return NextResponse.json({ error: "invalid_task" }, { status: 400 });
+    if (outcomeId) { const outcome = await db.prepare("SELECT id FROM monthly_outcomes WHERE id=? AND user_id=?").bind(outcomeId,identity.userId).first(); if (!outcome) return NextResponse.json({ error: "invalid_outcome" }, { status: 400 }); }
+    if (body.action === "add-weekly-action") { const priority = await db.prepare("SELECT COALESCE(MAX(priority),0) AS value FROM weekly_actions WHERE user_id=?").bind(identity.userId).first<{value:number}>(); await db.prepare("INSERT INTO weekly_actions (id,user_id,outcome_id,title,estimated_minutes,scheduled_for,priority,status,task_type,source) VALUES (?,?,?,?,?,?,?,'pending',?,'manual')").bind(crypto.randomUUID(),identity.userId,outcomeId,title,minutes,scheduledFor,(priority?.value??0)+1,taskType).run(); }
+    else if (typeof body.id === "string") await db.prepare("UPDATE weekly_actions SET outcome_id=?,title=?,estimated_minutes=?,scheduled_for=?,task_type=?,source='manual' WHERE id=? AND user_id=?").bind(outcomeId,title,minutes,scheduledFor,taskType,body.id,identity.userId).run();
+    else return NextResponse.json({ error: "missing_id" }, { status: 400 });
   } else if (body.action === "generate-week-plan") {
     const [profile, journeyRows] = await Promise.all([
       db.prepare("SELECT vision, weekly_capacity_minutes, weekly_goal FROM profiles WHERE user_id = ?").bind(identity.userId).first<{ vision: string; weekly_capacity_minutes: number; weekly_goal: string }>(),

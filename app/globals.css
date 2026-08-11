@@ -114,7 +114,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 3px
 .outcome-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 13px; margin-top: 14px; }
 .outcome-card { min-height: 164px; padding: 18px; }
 .outcome-head { display: flex; align-items: center; justify-content: space-between; }
-.outcome-head > b { font-size: 11px; }
+.outcome-head > b, .outcome-head > div > b { font-size: 11px; }
+.outcome-head > div { display:flex;align-items:center;gap:7px }.card-edit,.task-edit{padding:5px 8px;border:1px solid var(--line);border-radius:7px;color:var(--muted);background:white;font-size:8px;cursor:pointer}.card-edit:hover,.task-edit:hover{color:var(--forest);border-color:#b9c9bf}
 .area-pill { display: inline-flex; padding: 5px 8px; border-radius: 99px; color: #65736e; background: #eceee9; font-size: 8px; font-weight: 700; }
 .area-pill.green, .progress-bar i.green { background: var(--sage); color: #52705e; }
 .area-pill.blue, .progress-bar i.blue { background: var(--blue); color: #567284; }
@@ -157,6 +158,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 3px
 .task-row { display: flex; align-items: start; gap: 11px; padding: 15px 0; border-bottom: 1px solid var(--line); cursor: pointer; }
 .task-row:last-child { border: 0; }
 .task-row input { accent-color: var(--forest); margin-top: 2px; }
+.task-row > span { min-width:0;flex:1 }.task-edit{margin-left:auto;flex:none}.weekly-heading-actions{display:flex;flex-wrap:wrap;align-items:center;justify-content:flex-end;gap:8px}.plan-outcomes>.empty-list{grid-column:1/-1}
 .task-row b, .task-row small { display: block; }
 .task-row b { font-size: 11px; line-height: 1.5; }
 .task-row small { margin-top: 4px; color: var(--muted); font-size: 9px; }
