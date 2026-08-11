@@ -448,7 +448,7 @@ function EnglishCoach({ messages, busy, mutate }: { messages: EnglishMessage[]; 
   return <section className="english-coach"><div className="section-heading"><div><span className="eyebrow">English Coach</span><h3>对话、纠正与口语训练</h3></div>{latestReply && <button className="soft-button" onClick={() => speak(latestReply.text)}>▶ 播放回复</button>}</div><div className="chat-log">{messages.length ? messages.slice(-8).map((item) => <div key={item.id} className={`chat-bubble ${item.role}`}><b>{item.role === "user" ? "You" : "Coach"}</b><p>{item.text}</p>{item.feedback && <small>{item.feedback}</small>}</div>) : <div className="empty-list"><b>Start with one sentence.</b><p>Try: “This week, I want to…”</p></div>}</div><form className="coach-input" onSubmit={submit}><textarea value={message} onChange={(event) => setMessage(event.target.value)} placeholder="用英语输入，或点击麦克风开始口语…" /><div><button type="button" className="soft-button" onClick={listen}>{listening ? "正在聆听…" : "◉ 开始口语"}</button><button className="primary-button" disabled={busy || !message.trim()}>发送给 Coach</button></div></form></section>;
 }
 
-function OpenStreetFootprintMap({ items, selectedId, onSelect }: { items: Footprint[]; selectedId: string; onSelect: (id: string) => void }) {
+function OpenStreetFootprintMap({ items, selectedId, onSelect, onEdit }: { items: Footprint[]; selectedId: string; onSelect: (id: string) => void; onEdit: (item: Footprint) => void }) {
   const elementRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -466,6 +466,8 @@ function OpenStreetFootprintMap({ items, selectedId, onSelect }: { items: Footpr
       }).addTo(map);
 
       const bounds = L.latLngBounds([]);
+      const selectedBounds = L.latLngBounds([]);
+      let selectedLayer: import("leaflet").Layer | undefined;
       items.forEach((item) => {
         if (item.latitude === null || item.longitude === null) return;
         const selected = item.id === selectedId;
@@ -494,16 +496,38 @@ function OpenStreetFootprintMap({ items, selectedId, onSelect }: { items: Footpr
         }
         layer.addTo(map!);
         layer.bindTooltip(`${visited ? "已去过" : "想去"} · ${item.name}`, { sticky: true });
+        const popup = document.createElement("article");
+        popup.className = "footprint-popup-card";
+        const meta = document.createElement("small");
+        meta.textContent = `${visited ? "已去过" : "未来想去"}${item.visited_at ? ` · ${new Date(item.visited_at).toLocaleDateString("zh-CN")}` : ""}`;
+        const title = document.createElement("b");
+        title.textContent = item.name;
+        const content = document.createElement("p");
+        content.textContent = item.content || "还没有写下这里的故事。";
+        const edit = document.createElement("button");
+        edit.type = "button";
+        edit.textContent = "编辑足迹";
+        edit.addEventListener("click", () => onEdit(item));
+        popup.append(meta, title, content, edit);
+        layer.bindPopup(popup, { autoPan: false, className: "footprint-map-popup", maxWidth: 290 });
         layer.on("click", () => onSelect(item.id));
         const layerBounds = "getBounds" in layer ? (layer as import("leaflet").FeatureGroup | import("leaflet").Circle).getBounds() : L.latLngBounds([[item.latitude, item.longitude]]);
         bounds.extend(layerBounds);
+        if (selected) {
+          selectedLayer = layer;
+          selectedBounds.extend(layerBounds);
+        }
       });
 
       if (bounds.isValid()) map.fitBounds(bounds, { padding: [30, 30], maxZoom: 8 });
+      if (selectedBounds.isValid()) {
+        map.fitBounds(selectedBounds, { paddingTopLeft: [50, 85], paddingBottomRight: [50, 50], maxZoom: 11 });
+        selectedLayer?.openPopup();
+      }
     });
 
     return () => { cancelled = true; map?.remove(); };
-  }, [items, onSelect, selectedId]);
+  }, [items, onEdit, onSelect, selectedId]);
 
   return <div ref={elementRef} className="footprint-map" aria-label="OpenStreetMap 足迹地图" />;
 }
@@ -533,13 +557,13 @@ function Footprints({ items, images, onReload }: { items: Footprint[]; images: F
     <div className="footprint-summary"><div><b>{visitedCount}</b><span>已点亮</span></div><div><b>{wishlistCount}</b><span>想去的地方</span></div><p>去过的地方会点亮为实心坐标，想去的地方会保留为下一段旅程。</p></div>
     <section className="footprint-layout">
       <div className="map-panel">
-        <OpenStreetFootprintMap items={items} selectedId={selected?.id ?? ""} onSelect={setSelectedId} />
+        <OpenStreetFootprintMap items={items} selectedId={selectedId} onSelect={setSelectedId} onEdit={setEditing} />
         {geocoding && <div className="map-loading">正在解析地图区域…</div>}
         <div className="map-legend"><span><i className="visited" />已去过</span><span><i className="selected" />当前选中</span><span><i className="wishlist" />想去</span></div>
       </div>
       <aside className="footprint-side">
         <div className="filter-row"><button className={filter === "all" ? "active" : ""} onClick={() => setFilter("all")}>全部</button><button className={filter === "visited" ? "active" : ""} onClick={() => setFilter("visited")}>已去过</button><button className={filter === "wishlist" ? "active" : ""} onClick={() => setFilter("wishlist")}>想去</button></div>
-        <div className="footprint-list">{visible.length ? visible.map((item) => { const cover = images.find((image) => image.footprint_id === item.id); return <button key={item.id} className={`${item.status} ${selected?.id === item.id ? "active" : ""}`} onClick={() => setSelectedId(item.id)}>{cover ? <img src={`/api/footprint-image/${cover.id}`} alt="" /> : <span className="footprint-placeholder">⌖</span>}<span><small>{item.status === "visited" ? "● 已点亮" : "○ 想去"}</small><b>{item.name}</b><em>{item.visited_at ? new Date(item.visited_at).toLocaleDateString("zh-CN") : "未来某一天"}</em></span></button>; }) : <div className="empty-list"><b>这里还是空白</b><p>留下一个去过或想去的地方。</p></div>}</div>
+        <div className="footprint-list">{visible.length ? visible.map((item) => { const cover = images.find((image) => image.footprint_id === item.id); return <button key={item.id} className={`${item.status} ${selectedId === item.id ? "active" : ""}`} onClick={() => setSelectedId(item.id)}>{cover ? <img src={`/api/footprint-image/${cover.id}`} alt="" /> : <span className="footprint-placeholder">⌖</span>}<span><small>{item.status === "visited" ? "● 已点亮" : "○ 想去"}</small><b>{item.name}</b><em>{item.visited_at ? new Date(item.visited_at).toLocaleDateString("zh-CN") : "未来某一天"}</em></span></button>; }) : <div className="empty-list"><b>这里还是空白</b><p>留下一个去过或想去的地方。</p></div>}</div>
       </aside>
     </section>
     {selected && <section className="footprint-story"><div className="section-heading"><div><span className="eyebrow">{selected.status === "visited" ? "这片地图已经点亮" : "未来目的地"}</span><h3>{selected.name}</h3></div><button className="soft-button" onClick={() => setEditing(selected)}>编辑足迹</button></div><p>{selected.content || "还没有写下这里的故事。"}</p>{selectedImages.length > 0 && <div className="footprint-gallery">{selectedImages.map((image) => <img key={image.id} src={`/api/footprint-image/${image.id}`} alt={`${selected.name}足迹照片`} loading="lazy" />)}</div>}</section>}
