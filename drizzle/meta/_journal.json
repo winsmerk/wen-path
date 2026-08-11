@@ -15,6 +15,13 @@
       "when": 1786417446244,
       "tag": "0001_long_warbound",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1786418737448,
+      "tag": "0002_flawless_human_robot",
+      "breakpoints": true
     }
   ]
 }

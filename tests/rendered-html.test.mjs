@@ -18,19 +18,24 @@ test("renders the LifeOS application shell", async () => {
   const response = await render();
   assert.equal(response.status, 200);
   const html = await response.text();
-  assert.match(html, /文子的 LifeOS/);
-  assert.match(html, /40岁征程工作台/);
+  assert.match(html, />wen</);
+  assert.doesNotMatch(html, /40岁征程工作台/);
+  assert.match(html, /把40岁愿景连接到本月、本周和今天/);
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton/);
 });
 
 test("ships product metadata and database declaration", async () => {
   const { readFile } = await import("node:fs/promises");
-  const [layout, page, hosting] = await Promise.all([
+  const [layout, page, lifeOS, hosting] = await Promise.all([
     readFile(new URL("app/layout.tsx", templateRoot), "utf8"),
     readFile(new URL("app/page.tsx", templateRoot), "utf8"),
+    readFile(new URL("app/LifeOS.tsx", templateRoot), "utf8"),
     readFile(new URL(".openai/hosting.json", templateRoot), "utf8"),
   ]);
-  assert.match(layout, /文子的 LifeOS/);
+  assert.match(layout, /const title = "wen"/);
   assert.match(page, /<LifeOS \/>/);
+  assert.match(lifeOS, /苏轼/);
+  assert.match(lifeOS, /帮我调整计划/);
+  assert.match(lifeOS, /编辑征程/);
   assert.match(hosting, /"d1": "DB"/);
 });

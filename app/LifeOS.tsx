@@ -36,7 +36,7 @@ type Action = {
   estimated_minutes: number;
   scheduled_for: string;
   priority: number;
-  status: "pending" | "completed";
+  status: "pending" | "completed" | "paused";
 };
 
 type Checkin = {
@@ -83,6 +83,16 @@ const areaTone: Record<string, string> = {
   关系与家庭: "rose",
   探索与生活: "sky",
 };
+
+const suShiQuotes = [
+  { text: "人生如逆旅，我亦是行人。", source: "《临江仙·送钱穆父》" },
+  { text: "竹杖芒鞋轻胜马，谁怕？一蓑烟雨任平生。", source: "《定风波·莫听穿林打叶声》" },
+  { text: "但愿人长久，千里共婵娟。", source: "《水调歌头·明月几时有》" },
+  { text: "休对故人思故国，且将新火试新茶。诗酒趁年华。", source: "《望江南·超然台作》" },
+  { text: "腹有诗书气自华。", source: "《和董传留别》" },
+  { text: "回首向来萧瑟处，归去，也无风雨也无晴。", source: "《定风波·莫听穿林打叶声》" },
+  { text: "一点浩然气，千里快哉风。", source: "《水调歌头·黄州快哉亭赠张偓佺》" },
+];
 
 export default function LifeOS() {
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
@@ -150,7 +160,8 @@ export default function LifeOS() {
   const completedActions = workspace.actions.filter((item) => item.status === "completed").length;
   const exerciseCount = workspace.checkins.filter((item) => item.type === "exercise").length;
   const englishCount = workspace.checkins.filter((item) => item.type === "english").length;
-  const plannedMinutes = workspace.actions.reduce((sum, item) => sum + item.estimated_minutes, 0);
+  const activeActions = workspace.actions.filter((item) => item.status !== "paused");
+  const plannedMinutes = activeActions.reduce((sum, item) => sum + item.estimated_minutes, 0);
   const completedMinutes = workspace.actions
     .filter((item) => item.status === "completed")
     .reduce((sum, item) => sum + item.estimated_minutes, 0);
@@ -192,12 +203,12 @@ export default function LifeOS() {
           />
         )}
         {tab === "journeys" && <Journeys items={workspace.journeys} busy={saving} mutate={mutate} />}
-        {tab === "plan" && <Plan outcomes={workspace.outcomes} actions={workspace.actions} busy={saving} onToggle={(id) => mutate({ action: "toggle-action", id })} />}
+        {tab === "plan" && <Plan outcomes={workspace.outcomes} actions={workspace.actions} busy={saving} mutate={mutate} />}
         {tab === "records" && <Records items={workspace.checkins} onCheckin={setCheckinType} />}
         {tab === "review" && (
           <ReviewPanel
             completedActions={completedActions}
-            actionTotal={workspace.actions.length}
+            actionTotal={activeActions.length}
             exerciseCount={exerciseCount}
             englishCount={englishCount}
             reviews={workspace.reviews}
@@ -231,7 +242,7 @@ export default function LifeOS() {
 }
 
 function Brand() {
-  return <div className="brand"><span className="brand-mark">文</span><span><strong>文子的 LifeOS</strong><small>40岁征程工作台</small></span></div>;
+  return <div className="brand"><strong>wen</strong></div>;
 }
 
 function MobileHeader() {
@@ -239,11 +250,11 @@ function MobileHeader() {
 }
 
 function Loading() {
-  return <div className="loading-screen"><span className="brand-mark">文</span><p>正在整理今天最重要的事…</p></div>;
+  return <div className="loading-screen"><span className="loading-brand">wen</span><p>正在整理今天最重要的事…</p></div>;
 }
 
 function ErrorState() {
-  return <div className="loading-screen"><span className="brand-mark">文</span><h1>工作台暂时没有准备好</h1><p>刷新页面后再试一次。</p></div>;
+  return <div className="loading-screen"><span className="loading-brand">wen</span><h1>工作台暂时没有准备好</h1><p>刷新页面后再试一次。</p></div>;
 }
 
 function Onboarding({ workspace, busy, onStart }: { workspace: Workspace; busy: boolean; onStart: () => void }) {
@@ -284,12 +295,17 @@ function Today(props: {
   onNavigate: (tab: Tab) => void;
 }) {
   const pending = props.workspace.actions.find((item) => item.status === "pending");
-  const percentage = Math.round((props.completedActions / Math.max(props.workspace.actions.length, 1)) * 100);
+  const activeActionCount = props.workspace.actions.filter((item) => item.status !== "paused").length;
+  const percentage = Math.round((props.completedActions / Math.max(activeActionCount, 1)) * 100);
+  const today = new Date();
+  const dayKey = Math.floor(Date.UTC(today.getFullYear(), today.getMonth(), today.getDate()) / 86400000);
+  const quote = suShiQuotes[Math.abs(dayKey) % suShiQuotes.length];
+  const dateLabel = new Intl.DateTimeFormat("zh-CN", { year: "numeric", month: "long", day: "numeric", weekday: "long" }).format(today);
   return (
     <>
-      <PageHeader kicker="2026年8月11日 · 星期二" title="早上好，文子">
+      <header className="page-header poetry-header"><div><p>{dateLabel}</p><h1>“{quote.text}”</h1><small>—— 苏轼 {quote.source}</small></div>
         <div className="stage-chip"><span />建立基线 · 第1周</div>
-      </PageHeader>
+      </header>
       <section className="hero-grid">
         <article className="focus-card">
           <div className="card-topline"><span>今日最重要行动</span><i>高贡献</i></div>
@@ -302,7 +318,7 @@ function Today(props: {
         </article>
         <article className="week-card">
           <div className="section-heading"><div><span className="eyebrow">本周状态</span><h3>节奏刚刚好</h3></div><span className="capacity-badge">未过载</span></div>
-          <div className="ring-row"><div className="progress-ring" style={{ "--progress": `${percentage * 3.6}deg` } as React.CSSProperties}><span><b>{percentage}%</b><small>已完成</small></span></div><div className="week-stats"><p><b>{props.completedActions}/{props.workspace.actions.length}</b><span>重点行动</span></p><p><b>{Math.round(props.completedMinutes / 60 * 10) / 10}h</b><span>已投入 / {Math.round(props.plannedMinutes / 60 * 10) / 10}h</span></p></div></div>
+          <div className="ring-row"><div className="progress-ring" style={{ "--progress": `${percentage * 3.6}deg` } as React.CSSProperties}><span><b>{percentage}%</b><small>已完成</small></span></div><div className="week-stats"><p><b>{props.completedActions}/{activeActionCount}</b><span>重点行动</span></p><p><b>{Math.round(props.completedMinutes / 60 * 10) / 10}h</b><span>已投入 / {Math.round(props.plannedMinutes / 60 * 10) / 10}h</span></p></div></div>
           <div className="balance-row"><span><i className="dot green" />运动 <b>{props.exerciseCount}/3</b></span><span><i className="dot blue" />英语 <b>{props.englishCount}/3</b></span><span><i className="dot sand" />恢复 <b>良好</b></span></div>
         </article>
       </section>
@@ -337,6 +353,7 @@ function OutcomeCard({ item, index }: { item: Outcome; index: number }) {
 
 function Journeys({ items, busy, mutate }: { items: Journey[]; busy: boolean; mutate: (payload: Record<string, unknown>, success?: string) => Promise<boolean> }) {
   const [filter, setFilter] = useState("全部");
+  const [editing, setEditing] = useState<Journey | null>(null);
   const areas = ["全部", "健康", "英语", "职业", "财务与资产", "收入", "关系与家庭", "探索与生活"];
   const visible = filter === "全部" ? items : items.filter((item) => item.area === filter);
   const activeCount = items.filter((item) => item.status === "active").length;
@@ -347,9 +364,10 @@ function Journeys({ items, busy, mutate }: { items: Journey[]; busy: boolean; mu
       {visible.map((item) => <article key={item.id} className="journey-row">
         <div className="journey-number">{String(item.sequence_number).padStart(2, "0")}</div>
         <div className="journey-copy"><div><span className={`area-pill ${areaTone[item.area] ?? "stone"}`}>{item.area}</span><span className={`status-text ${item.status}`}>{statusLabel(item.status)}</span></div><h3>{item.title}</h3><p>{item.acceptance_criteria}</p>{item.status === "active" && <small>下一步：{item.next_action}</small>}</div>
-        <div className="journey-action">{item.status === "active" ? <><b>{item.progress}%</b><button disabled={busy} onClick={() => mutate({ action: "journey-status", id: item.id, status: "paused" }, "征程已暂停，这不代表失败")}>暂停</button></> : <button disabled={busy} onClick={() => mutate({ action: "journey-status", id: item.id, status: "active" }, "已加入当前阶段")}>激活</button>}</div>
+        <div className="journey-action"><div className="journey-menu"><button onClick={() => setEditing(item)}>编辑</button>{item.status === "active" ? <button disabled={busy} onClick={() => mutate({ action: "journey-status", id: item.id, status: "paused" }, "征程已暂停，这不代表失败")}>暂停</button> : <button disabled={busy} onClick={() => mutate({ action: "journey-status", id: item.id, status: "active" }, "已加入当前阶段")}>激活</button>}</div>{item.status === "active" && <b>{item.progress}%</b>}</div>
       </article>)}
     </section>
+    {editing && <JourneyDialog journey={editing} busy={busy} onClose={() => setEditing(null)} onSave={async (values) => { const ok = await mutate({ action: "update-journey", id: editing.id, ...values }, "征程内容已更新"); if (ok) setEditing(null); }} onDelete={async () => { const ok = await mutate({ action: "delete-journey", id: editing.id }, "征程已删除"); if (ok) setEditing(null); }} />}
   </>;
 }
 
@@ -357,14 +375,19 @@ function statusLabel(status: Journey["status"]) {
   return { active: "进行中", planned: "待开始", paused: "已暂停", completed: "已完成" }[status];
 }
 
-function Plan({ outcomes, actions, busy, onToggle }: { outcomes: Outcome[]; actions: Action[]; busy: boolean; onToggle: (id: string) => void }) {
+function Plan({ outcomes, actions, busy, mutate }: { outcomes: Outcome[]; actions: Action[]; busy: boolean; mutate: (payload: Record<string, unknown>, success?: string) => Promise<boolean> }) {
+  const [adjusting, setAdjusting] = useState(false);
+  const activeActions = actions.filter((item) => item.status !== "paused");
+  const weeklyMinutes = activeActions.reduce((sum, item) => sum + item.estimated_minutes, 0);
+  const weeklyHours = Math.round(weeklyMinutes / 6) / 10;
   return <>
-    <PageHeader kicker="2026年8月12日—9月11日" title="首月计划"><button className="soft-button">帮我调整计划</button></PageHeader>
+    <PageHeader kicker="2026年8月12日—9月11日" title="首月计划"><button className="soft-button" onClick={() => setAdjusting(true)}>帮我调整计划</button></PageHeader>
     <div className="plan-summary"><div><span>核心成果</span><b>4</b><small>保持少而重要</small></div><div><span>预计投入</span><b>{outcomes.reduce((sum, item) => sum + item.expected_hours, 0)}h</b><small>每周约 7 小时</small></div><div><span>明确不做</span><b>3</b><small>课程、社群、重型副业</small></div></div>
     <section className="plan-layout">
       <div><div className="section-heading"><div><span className="eyebrow">月度成果</span><h3>完成标准清晰，才算真正完成</h3></div></div><div className="plan-outcomes">{outcomes.map((item, index) => <OutcomeCard item={item} index={index} key={item.id} />)}</div></div>
-      <div className="weekly-panel"><div className="section-heading"><div><span className="eyebrow">本周重点</span><h3>{actions.filter((item) => item.status === "completed").length}/{actions.length} 已完成</h3></div><span className="capacity-badge">6.3h / 7h</span></div>{actions.map((item) => <label key={item.id} className={item.status === "completed" ? "task-row completed" : "task-row"}><input aria-label={`${item.title}完成状态`} type="checkbox" checked={item.status === "completed"} disabled={busy} onChange={() => onToggle(item.id)} /><span><b>{item.title}</b><small>{item.scheduled_for} · {item.estimated_minutes}分钟</small></span></label>)}</div>
+      <div className="weekly-panel"><div className="section-heading"><div><span className="eyebrow">本周重点</span><h3>{actions.filter((item) => item.status === "completed").length}/{activeActions.length} 已完成</h3></div><span className="capacity-badge">{weeklyHours}h / 7h</span></div>{actions.map((item) => <label key={item.id} className={`task-row ${item.status}`}><input aria-label={`${item.title}完成状态`} type="checkbox" checked={item.status === "completed"} disabled={busy || item.status === "paused"} onChange={() => mutate({ action: "toggle-action", id: item.id })} /><span><b>{item.title}</b><small>{item.status === "paused" ? "本周暂缓" : `${item.scheduled_for} · ${item.estimated_minutes}分钟`}</small></span></label>)}</div>
     </section>
+    {adjusting && <AdjustPlanDialog actions={actions} busy={busy} onClose={() => setAdjusting(false)} onAdjust={async (mode, message) => { const ok = await mutate({ action: "adjust-plan", mode }, message); if (ok) setAdjusting(false); }} />}
   </>;
 }
 
@@ -393,6 +416,37 @@ function ReviewPanel({ completedActions, actionTotal, exerciseCount, englishCoun
       <aside className="review-draft"><span className="ai-mark">✦</span><span className="eyebrow">复盘助手草稿</span><h3>先看数据，再做判断</h3><div><b>客观数据</b><p>本周完成 {completedActions}/{actionTotal} 项重点，记录运动 {exerciseCount} 次、英语 {englishCount} 次。</p></div><div><b>AI 推测</b><p>{completedActions < actionTotal / 2 ? "当前计划可能仍然偏多，需要继续缩小范围。" : "当前计划容量基本合理，可以保持节奏。"}</p></div><small>推测不是事实，请结合你的真实感受确认。</small>{reviews[0] && <div className="last-review"><b>最近一次决定</b><p>{reviews[0].next_priority}</p></div>}</aside>
     </section>
   </>;
+}
+
+function JourneyDialog({ journey, busy, onClose, onSave, onDelete }: {
+  journey: Journey;
+  busy: boolean;
+  onClose: () => void;
+  onSave: (values: { title: string; area: string; acceptanceCriteria: string; nextAction: string }) => void;
+  onDelete: () => void;
+}) {
+  const [title, setTitle] = useState(journey.title);
+  const [area, setArea] = useState(journey.area);
+  const [acceptanceCriteria, setAcceptanceCriteria] = useState(journey.acceptance_criteria);
+  const [nextAction, setNextAction] = useState(journey.next_action);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const areas = ["健康", "英语", "职业", "收入", "财务与资产", "关系与家庭", "探索与生活"];
+
+  return <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><form className="dialog journey-dialog" onSubmit={(event) => { event.preventDefault(); onSave({ title, area, acceptanceCriteria, nextAction }); }}><button type="button" className="dialog-close" onClick={onClose} aria-label="关闭">×</button><span className="eyebrow">征程 {String(journey.sequence_number).padStart(2, "0")}</span><h2>编辑征程</h2><p>路线可以调整，验收标准要始终清楚。</p><div className="field-grid"><label><span>征程名称</span><input required maxLength={80} value={title} onChange={(event) => setTitle(event.target.value)} /></label><label><span>人生领域</span><select value={area} onChange={(event) => setArea(event.target.value)}>{areas.map((item) => <option key={item}>{item}</option>)}</select></label></div><label><span>验收标准</span><textarea required maxLength={300} value={acceptanceCriteria} onChange={(event) => setAcceptanceCriteria(event.target.value)} /></label><label><span>下一步行动</span><input required maxLength={160} value={nextAction} onChange={(event) => setNextAction(event.target.value)} /></label><div className="dialog-actions"><button type="button" className={confirmDelete ? "danger-button confirm" : "danger-button"} disabled={busy} onClick={() => { if (confirmDelete) onDelete(); else setConfirmDelete(true); }}>{confirmDelete ? "再次点击确认删除" : "删除征程"}</button><button className="primary-button" disabled={busy}>{busy ? "正在保存…" : "保存修改"}</button></div></form></div>;
+}
+
+function AdjustPlanDialog({ actions, busy, onClose, onAdjust }: {
+  actions: Action[];
+  busy: boolean;
+  onClose: () => void;
+  onAdjust: (mode: string, message: string) => void;
+}) {
+  const active = actions.filter((item) => item.status !== "paused");
+  const minutes = active.reduce((sum, item) => sum + item.estimated_minutes, 0);
+  const pausedCount = actions.filter((item) => item.status === "paused").length;
+  const hours = Math.round(minutes / 6) / 10;
+
+  return <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section className="dialog adjust-dialog" role="dialog" aria-modal="true" aria-labelledby="adjust-title"><button className="dialog-close" onClick={onClose} aria-label="关闭">×</button><span className="ai-mark">✦</span><span className="eyebrow">基于当前容量</span><h2 id="adjust-title">调整本周计划</h2><div className="capacity-overview"><span><b>{hours}h</b>当前安排</span><i><b style={{ width: `${Math.min(100, minutes / 420 * 100)}%` }} /></i><span><b>7h</b>可用时间</span></div><p className="adjust-summary">{minutes <= 357 ? "当前安排留有约15%以上余量，不必为了填满时间继续加任务。" : minutes <= 420 ? "当前安排接近容量上限，如果精力偏低，建议主动缩小范围。" : "当前计划已经过载，建议先暂停低优先级任务。"}</p><div className="adjust-options"><button disabled={busy} onClick={() => onAdjust("pause-lowest", "已暂缓一项低优先级职业任务，为恢复留出空间")}><span>01</span><div><b>腾出恢复空间</b><small>暂缓优先级最低的非健康任务</small></div><i>约省 1h</i></button><button disabled={busy} onClick={() => onAdjust("shrink-scope", "已缩小一项职业任务的交付范围")}><span>02</span><div><b>缩小交付范围</b><small>保留成果方向，减少20分钟投入</small></div><i>少做一点</i></button>{pausedCount > 0 && <button disabled={busy} onClick={() => onAdjust("restore-paused", "已恢复本周暂缓的任务")}><span>03</span><div><b>恢复暂缓任务</b><small>把之前暂缓的行动重新放回本周</small></div><i>{pausedCount} 项</i></button>}</div><small className="explain-note">所有调整都需要你确认；系统不会自动增加任务。</small></section></div>;
 }
 
 function CheckinDialog({ type, busy, onClose, onSubmit }: { type: "exercise" | "english"; busy: boolean; onClose: () => void; onSubmit: (duration: number, note: string) => void }) {

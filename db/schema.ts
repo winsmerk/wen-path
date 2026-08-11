@@ -23,6 +23,7 @@ export const journeys = sqliteTable(
     status: text("status").notNull(),
     progress: integer("progress").notNull().default(0),
     nextAction: text("next_action").notNull(),
+    deletedAt: text("deleted_at"),
   },
   (table) => [index("idx_journeys_user_status").on(table.userId, table.status)],
 );

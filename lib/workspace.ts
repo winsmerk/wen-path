@@ -39,7 +39,7 @@ export async function ensureSchema(db: D1Database) {
       id TEXT PRIMARY KEY, user_id TEXT NOT NULL, sequence_number INTEGER NOT NULL,
       title TEXT NOT NULL, area TEXT NOT NULL, stage TEXT NOT NULL,
       acceptance_criteria TEXT NOT NULL, status TEXT NOT NULL,
-      progress INTEGER NOT NULL DEFAULT 0, next_action TEXT NOT NULL
+      progress INTEGER NOT NULL DEFAULT 0, next_action TEXT NOT NULL, deleted_at TEXT
     )`),
     db.prepare(`CREATE TABLE IF NOT EXISTS monthly_outcomes (
       id TEXT PRIMARY KEY, user_id TEXT NOT NULL, title TEXT NOT NULL,
@@ -65,6 +65,13 @@ export async function ensureSchema(db: D1Database) {
     db.prepare("CREATE INDEX IF NOT EXISTS idx_actions_user_status ON weekly_actions(user_id, status)"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_checkins_user_type ON checkins(user_id, type)"),
   ]);
+
+  const journeyColumns = await db.prepare("PRAGMA table_info(journeys)").all<{ name: string }>();
+  if (!journeyColumns.results.some((column) => column.name === "deleted_at")) {
+    await db.prepare("ALTER TABLE journeys ADD COLUMN deleted_at TEXT").run();
+  }
+
+  await db.prepare("PRAGMA optimize").run();
 }
 
 const vision =
