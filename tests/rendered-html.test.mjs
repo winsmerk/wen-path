@@ -50,6 +50,10 @@ test("ships product metadata, adaptive planning, and database declaration", asyn
   assert.match(lifeOS, /关联月度成果/);
   assert.match(lifeOS, /提交一篇读书笔记/);
   assert.match(lifeOS, /英语学习笔记/);
+  assert.match(lifeOS, /提交完成证据/);
+  assert.match(lifeOS, /保存七问复盘/);
+  assert.match(lifeOS, /经营利润/);
+  assert.match(lifeOS, /副业时间上限/);
   assert.match(workspaceApi, /完整愿景/);
   assert.match(workspaceApi, /本周目标是主线/);
   assert.match(workspaceApi, /dimensions\.size >= 2/);
@@ -57,6 +61,10 @@ test("ships product metadata, adaptive planning, and database declaration", asyn
   assert.match(workspaceApi, /update-weekly-action/);
   assert.match(workspaceApi, /delete-weekly-action/);
   assert.match(workspaceApi, /note_required/);
+  assert.match(workspaceApi, /complete-journey/);
+  assert.match(workspaceApi, /stage_locked/);
+  assert.match(workspaceApi, /is_side_hustle/);
+  assert.match(workspaceApi, /kill_rule_count/);
   assert.equal([...visionJourneys.matchAll(/^\s+\[\d+,/gm)].length, 100);
   assert.match(visionJourneys, /完成40岁人生复盘与下一阶段愿景/);
   assert.match(hosting, /"d1": "DB"/);

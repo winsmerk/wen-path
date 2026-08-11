@@ -8,6 +8,8 @@ export const profiles = sqliteTable("profiles", {
   initialized: integer("initialized", { mode: "boolean" }).notNull().default(false),
   weeklyCapacityMinutes: integer("weekly_capacity_minutes").notNull().default(420),
   weeklyGoal: text("weekly_goal").notNull().default(""),
+  sideHustleLimitMinutes: integer("side_hustle_limit_minutes").notNull().default(360),
+  protectedDay: text("protected_day").notNull().default("周日"),
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
 });
@@ -26,6 +28,8 @@ export const journeys = sqliteTable(
     progress: integer("progress").notNull().default(0),
     nextAction: text("next_action").notNull(),
     deletedAt: text("deleted_at"),
+    evidence: text("evidence").notNull().default(""),
+    completedAt: text("completed_at"),
   },
   (table) => [index("idx_journeys_user_status").on(table.userId, table.status)],
 );
@@ -38,6 +42,9 @@ export const monthlyOutcomes = sqliteTable("monthly_outcomes", {
   progress: integer("progress").notNull().default(0),
   expectedHours: integer("expected_hours").notNull(),
   status: text("status").notNull(),
+  journeyId: text("journey_id").notNull().default(""),
+  kind: text("kind").notNull().default("milestone"),
+  period: text("period").notNull().default(""),
 });
 
 export const weeklyActions = sqliteTable(
@@ -54,6 +61,7 @@ export const weeklyActions = sqliteTable(
     completedAt: text("completed_at"),
     taskType: text("task_type").notNull().default("general"),
     source: text("source").notNull().default("manual"),
+    isSideHustle: integer("is_side_hustle", { mode: "boolean" }).notNull().default(false),
   },
   (table) => [index("idx_actions_user_status").on(table.userId, table.status)],
 );
@@ -78,6 +86,11 @@ export const reviews = sqliteTable("reviews", {
   achievement: text("achievement").notNull(),
   lowValue: text("low_value").notNull(),
   nextPriority: text("next_priority").notNull(),
+  healthCheck: text("health_check").notNull().default(""),
+  marketEvidence: text("market_evidence").notNull().default(""),
+  energyScore: integer("energy_score").notNull().default(7),
+  decision: text("decision").notNull().default("continue"),
+  killRuleCount: integer("kill_rule_count").notNull().default(0),
   createdAt: text("created_at").notNull(),
 });
 
@@ -89,6 +102,7 @@ export const taskOutputs = sqliteTable("task_outputs", {
 export const financialRecords = sqliteTable("financial_records", {
   id: text("id").primaryKey(), userId: text("user_id").notNull(), actionId: text("action_id"), category: text("category").notNull(),
   amount: integer("amount").notNull(), note: text("note").notNull(), recordedAt: text("recorded_at").notNull(), createdAt: text("created_at").notNull(),
+  incomeType: text("income_type").notNull().default(""), sourceName: text("source_name").notNull().default(""), expenseScope: text("expense_scope").notNull().default("personal"),
 });
 export const englishMessages = sqliteTable("english_messages", {
   id: text("id").primaryKey(), userId: text("user_id").notNull(), role: text("role").notNull(), text: text("text").notNull(),
