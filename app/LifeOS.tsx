@@ -112,6 +112,13 @@ const suShiQuotes = [
   { text: "一点浩然气，千里快哉风。", source: "《水调歌头·黄州快哉亭赠张偓佺》" },
 ];
 
+function compactVision(vision: string) {
+  const sentences = vision.split(/[。！？；;]+/).map((item) => item.trim()).filter(Boolean);
+  const summary = (sentences.at(-1) || vision.trim()).replace(/^最重要的是[，,:：]?\s*/, "");
+  if (!summary) return "在普通日子里，持续靠近自己想要的生活。";
+  return `${summary.length > 34 ? `${summary.slice(0, 34)}…` : summary}${summary.length <= 34 && !/[。！？]$/.test(summary) ? "。" : ""}`;
+}
+
 export default function LifeOS() {
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [tab, setTab] = useState<Tab>("today");
@@ -199,7 +206,7 @@ export default function LifeOS() {
         </nav>
         <button type="button" className={tab === "vision" ? "vision-mini active" : "vision-mini"} onClick={() => setTab("vision")}>
           <span className="eyebrow">40岁愿景</span>
-          <p>{workspace.profile.vision}</p>
+          <p>{compactVision(workspace.profile.vision)}</p>
           <div className="years-row"><span>还有 {visionTime.years} 年 {visionTime.months} 个月</span><i><b /></i></div>
         </button>
         <div className="user-row"><span className="avatar">文</span><span><strong>{workspace.profile.display_name}</strong><small>建立基线 · 第1阶段</small></span></div>

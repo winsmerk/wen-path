@@ -44,33 +44,53 @@ function classify(goal: string) {
   return "general";
 }
 
-function fallbackPlan(goal: string, capacity: number): PlanItem[] {
-  const type = classify(goal);
-  const names: Record<string, string[]> = {
-    reading: ["确定本周阅读范围与问题", "完成两次深度阅读", "整理并输出一篇读书笔记"],
-    finance: ["更新现金、固定资产与投资数据", "补全本月收入和固定支出", "查看财务现状并写下一个决定"],
-    exercise: ["完成第一次运动并记录感受", "完成第二次运动并观察恢复", "完成本周运动复盘"],
-    english: ["用英语描述本周目标", "完成一次英语对话练习", "整理英语学习笔记并口头复述"],
-    general: ["明确本周目标的完成标准", "推进最小可交付成果", "复盘结果并确定下一步"],
-  };
-  const count = capacity < 150 ? 2 : 3;
-  const minutes = Math.max(25, Math.floor(capacity * 0.85 / count / 5) * 5);
-  return names[type].slice(0, count).map((title, index) => ({ title: goal ? `${title}：${goal.slice(0, 32)}` : title, minutes, day: ["周二", "周四", "周日"][index], type }));
+function fallbackPlan(vision: string, goal: string, capacity: number): PlanItem[] {
+  const mainType = classify(goal);
+  const visionFocus = vision.split(/[。！？；;]+/).map((item) => item.trim()).filter(Boolean).at(-1)?.replace(/^最重要的是[，,:：]?\s*/, "").slice(0, 24) || "想要的生活";
+  const main = { type: mainType, title: `本周主线｜为“${goal.slice(0, 30)}”完成一个可验证成果` };
+  const dimensions = [
+    { type: "exercise", title: "身体健康｜完成一次运动并记录时长与身体感受" },
+    { type: "english", title: "英语能力｜用英语讲述本周目标，并整理一页纠正笔记" },
+    { type: "finance", title: "财务基础｜更新本周现金流，并写下一个具体财务决定" },
+    { type: "reading", title: "认知成长｜围绕本周目标阅读，并输出三点读书笔记" },
+    { type: "general", title: `愿景校准｜对照“${visionFocus}”，复盘取舍并确定下一步` },
+  ].filter((item) => item.type !== mainType);
+  const count = capacity < 180 ? 3 : capacity < 420 ? 4 : 5;
+  const usableMinutes = Math.floor(capacity * 0.85 / 5) * 5;
+  const minutes = Math.max(15, Math.floor(usableMinutes / count / 5) * 5);
+  const days = ["周一", "周二", "周四", "周六", "周日"];
+  const visionTask = dimensions.find((item) => item.type === "general");
+  const candidates = [main, ...(visionTask ? [visionTask] : []), ...dimensions.filter((item) => item !== visionTask)];
+  return candidates.slice(0, count).map((item, index) => ({ ...item, minutes, day: days[index] }));
 }
 
-async function generatePlan(goal: string, capacity: number): Promise<PlanItem[]> {
-  const answer = await askOpenAI(`根据本周目标“${goal}”和可用时间${capacity}分钟，生成2-5个任务。总时长不超过可用时间的85%。只返回JSON数组，每项字段为 title、minutes、day、type；type只能是 reading、finance、exercise、english、general。`);
+async function generatePlan(vision: string, goal: string, capacity: number, journeys: string): Promise<PlanItem[]> {
+  const answer = await askOpenAI(`请为用户生成一份不机械、能真正推进生活的本周计划。
+
+完整愿景：${vision}
+本周目标：${goal}
+正在推进或计划中的征程：${journeys || "暂无明确征程"}
+本周可用时间：${capacity}分钟
+
+生成规则：
+1. 生成3-5个任务，总时长不超过可用时间的85%，保留余量。
+2. 本周目标是主线，但任务需从至少2个相关维度展开，可选维度包括身体健康、英语与学习、职业与能力、财务与收入、关系与家庭、探索与生活；不要为了凑数覆盖所有维度。
+3. 每个任务都必须具体、可执行、有可验证的完成成果，标题格式为“维度｜行动与成果”。
+4. 结合愿景和当前征程做取舍，避免重复、空泛和连续安排同一种任务。
+5. day使用周一至周日或本周；type只能是 reading、finance、exercise、english、general。
+6. 只返回JSON数组，每项字段为 title、minutes、day、type，不要附加解释。`);
   if (answer) {
     try {
       const parsed = JSON.parse(answer.replace(/^```json\s*|\s*```$/g, "")) as PlanItem[];
-      if (Array.isArray(parsed) && parsed.length >= 2) {
+      if (Array.isArray(parsed) && parsed.length >= 3) {
         const allowed = ["reading", "finance", "exercise", "english", "general"];
         const safe = parsed.slice(0, 5).map((item) => ({ title: clean(item.title, 100), minutes: Math.max(15, Math.min(180, Number(item.minutes) || 30)), day: clean(item.day, 12) || "本周", type: allowed.includes(item.type) ? item.type : "general" }));
-        if (safe.every((item) => item.title) && safe.reduce((sum, item) => sum + item.minutes, 0) <= capacity) return safe;
+        const dimensions = new Set(safe.map((item) => item.type));
+        if (safe.every((item) => item.title) && dimensions.size >= 2 && safe.reduce((sum, item) => sum + item.minutes, 0) <= capacity * 0.85) return safe;
       }
     } catch { /* use deterministic fallback */ }
   }
-  return fallbackPlan(goal, capacity);
+  return fallbackPlan(vision, goal, capacity);
 }
 
 export async function GET() {
@@ -129,10 +149,15 @@ export async function POST(request: Request) {
     const capacity = Math.max(60, Math.min(2400, Number(body.capacityMinutes) || 420)), goal = clean(body.goal, 500);
     await db.prepare("UPDATE profiles SET weekly_capacity_minutes = ?, weekly_goal = ?, updated_at = ? WHERE user_id = ?").bind(capacity, goal, now, identity.userId).run();
   } else if (body.action === "generate-week-plan") {
-    const profile = await db.prepare("SELECT weekly_capacity_minutes, weekly_goal FROM profiles WHERE user_id = ?").bind(identity.userId).first<{ weekly_capacity_minutes: number; weekly_goal: string }>();
+    const [profile, journeyRows] = await Promise.all([
+      db.prepare("SELECT vision, weekly_capacity_minutes, weekly_goal FROM profiles WHERE user_id = ?").bind(identity.userId).first<{ vision: string; weekly_capacity_minutes: number; weekly_goal: string }>(),
+      db.prepare("SELECT title, area, status, next_action FROM journeys WHERE user_id = ? AND deleted_at IS NULL AND status IN ('active','planned') ORDER BY CASE status WHEN 'active' THEN 0 ELSE 1 END, sequence_number LIMIT 8").bind(identity.userId).all<{ title: string; area: string; status: string; next_action: string }>(),
+    ]);
     const goal = clean(body.goal, 500) || profile?.weekly_goal || "推进最重要的人生目标";
     const capacity = Math.max(60, Math.min(2400, Number(body.capacityMinutes) || profile?.weekly_capacity_minutes || 420));
-    const plan = await generatePlan(goal, capacity);
+    const vision = clean(profile?.vision, 2000) || "建立健康、从容、持续成长且热爱日常的生活";
+    const journeys = journeyRows.results.map((item) => `${item.area}｜${item.title}（${item.status === "active" ? "进行中" : "计划中"}）：${item.next_action}`).join("；");
+    const plan = await generatePlan(vision, goal, capacity, journeys);
     await db.prepare("UPDATE weekly_actions SET status = 'paused' WHERE user_id = ? AND status = 'pending'").bind(identity.userId).run();
     const maxPriority = await db.prepare("SELECT COALESCE(MAX(priority),0) AS value FROM weekly_actions WHERE user_id = ?").bind(identity.userId).first<{ value: number }>();
     await db.batch(plan.map((item, index) => db.prepare("INSERT INTO weekly_actions (id,user_id,outcome_id,title,estimated_minutes,scheduled_for,priority,status,task_type,source) VALUES (?,?,?,?,?,?,?,'pending',?,'ai')").bind(crypto.randomUUID(), identity.userId, `${identity.userId}-${item.type === "reading" ? "career" : item.type}`, item.title, item.minutes, item.day, (maxPriority?.value ?? 0) + index + 1, item.type)));

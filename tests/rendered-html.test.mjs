@@ -24,12 +24,13 @@ test("renders the LifeOS application shell", async () => {
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton/);
 });
 
-test("ships product metadata and database declaration", async () => {
+test("ships product metadata, adaptive planning, and database declaration", async () => {
   const { readFile } = await import("node:fs/promises");
-  const [layout, page, lifeOS, hosting] = await Promise.all([
+  const [layout, page, lifeOS, workspaceApi, hosting] = await Promise.all([
     readFile(new URL("app/layout.tsx", templateRoot), "utf8"),
     readFile(new URL("app/page.tsx", templateRoot), "utf8"),
     readFile(new URL("app/LifeOS.tsx", templateRoot), "utf8"),
+    readFile(new URL("app/api/workspace/route.ts", templateRoot), "utf8"),
     readFile(new URL(".openai/hosting.json", templateRoot), "utf8"),
   ]);
   assert.match(layout, /const title = "wen flow · Build a life you love\."/);
@@ -42,6 +43,10 @@ test("ships product metadata and database declaration", async () => {
   assert.match(lifeOS, /我的足迹/);
   assert.match(lifeOS, /编辑愿景/);
   assert.match(lifeOS, /未来要做的事情/);
+  assert.match(lifeOS, /compactVision/);
+  assert.match(workspaceApi, /完整愿景/);
+  assert.match(workspaceApi, /本周目标是主线/);
+  assert.match(workspaceApi, /dimensions\.size >= 2/);
   assert.match(hosting, /"d1": "DB"/);
   assert.match(hosting, /"r2": "MEDIA"/);
 });
