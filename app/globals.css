@@ -26,9 +26,9 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 3px
 .app-shell { min-height: 100vh; }
 .sidebar { position: fixed; inset: 0 auto 0 0; width: 244px; padding: 30px 22px 24px; display: flex; flex-direction: column; z-index: 20; background: #fafbf7; border-right: 1px solid var(--line); }
 .brand { display: flex; align-items: center; gap: 13px; min-height: 52px; }
-.brand-mark { width: 50px; height: 50px; display: grid; place-items: center; flex: none; border-radius: 50%; background: #397560; color: white; font-family: Georgia, "Songti SC", serif; font-size: 25px; box-shadow: 0 5px 16px rgba(35,75,66,.12); }
+.brand-mark { width: 52px; height: 52px; display: grid; place-items: center; flex: none; border-radius: 50%; background: #39725f; color: white; font-family: Georgia, "Songti SC", serif; font-size: 26px; }
 .brand strong, .brand small { display: block; }
-.brand strong { color: #22332d; font-family: Georgia, "Songti SC", serif; font-size: 26px; font-weight: 600; letter-spacing: -.035em; line-height: 1; }
+.brand strong { color: #22332d; font-family: Georgia, "Songti SC", serif; font-size: 28px; font-weight: 600; letter-spacing: -.035em; line-height: 1; }
 .brand small { margin-top: 8px; color: #77857f; font-size: 9px; letter-spacing: .08em; white-space: nowrap; }
 .side-nav { display: grid; gap: 4px; margin-top: 42px; }
 .nav-item { border: 0; background: transparent; display: flex; align-items: center; gap: 13px; padding: 11px 13px; border-radius: 10px; color: #66736e; text-align: left; cursor: pointer; font-size: 14px; transition: .18s ease; }

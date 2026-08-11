@@ -29,7 +29,7 @@ async function askOpenAI(prompt: string) {
     const response = await fetch("https://api.openai.com/v1/responses", {
       method: "POST",
       headers: { authorization: `Bearer ${key}`, "content-type": "application/json" },
-      body: JSON.stringify({ model: "gpt-5.6-luna", instructions: "你是 wen path 的克制型生活教练。输出必须简洁、具体、可执行。", input: prompt }),
+      body: JSON.stringify({ model: "gpt-5.6-luna", instructions: "你是 wen flow 的克制型生活教练。输出必须简洁、具体、可执行。", input: prompt }),
     });
     if (!response.ok) return "";
     return outputText(await response.json());

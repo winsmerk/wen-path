@@ -263,7 +263,7 @@ export default function LifeOS() {
 }
 
 function Brand() {
-  return <div className="brand"><span className="brand-mark">W</span><span className="brand-copy"><strong>wen path</strong><small>Build a life you love.</small></span></div>;
+  return <div className="brand"><span className="brand-mark">W</span><span className="brand-copy"><strong>wen flow</strong><small>Build a life you love.</small></span></div>;
 }
 
 function MobileHeader() {

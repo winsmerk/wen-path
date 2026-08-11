@@ -18,7 +18,7 @@ export async function generateMetadata(): Promise<Metadata> {
   const host = requestHeaders.get("x-forwarded-host") ?? requestHeaders.get("host") ?? "localhost:3000";
   const protocol = requestHeaders.get("x-forwarded-proto") ?? (host.startsWith("localhost") ? "http" : "https");
   const image = `${protocol}://${host}/og-v3.png`;
-  const title = "wen path · Build a life you love.";
+  const title = "wen flow · Build a life you love.";
   const description = "把愿景连接到征程、本周与今天，用真实行动持续构建喜欢的生活。";
 
   return {
