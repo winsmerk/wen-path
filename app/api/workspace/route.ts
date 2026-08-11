@@ -102,6 +102,11 @@ export async function POST(request: Request) {
 
   if (body.action === "initialize") {
     await db.prepare("UPDATE profiles SET initialized = 1, updated_at = ? WHERE user_id = ?").bind(now, identity.userId).run();
+  } else if (body.action === "update-vision") {
+    const vision = clean(body.vision, 2000), targetDate = clean(body.targetDate, 10);
+    const parsedTarget = new Date(`${targetDate}T00:00:00`);
+    if (!vision || !/^\d{4}-\d{2}-\d{2}$/.test(targetDate) || !Number.isFinite(parsedTarget.getTime())) return NextResponse.json({ error: "invalid_vision" }, { status: 400 });
+    await db.prepare("UPDATE profiles SET vision=?,target_date=?,updated_at=? WHERE user_id=?").bind(vision, targetDate, now, identity.userId).run();
   } else if (body.action === "toggle-action" && typeof body.id === "string") {
     const row = await db.prepare("SELECT status FROM weekly_actions WHERE id = ? AND user_id = ?").bind(body.id, identity.userId).first<{ status: string }>();
     if (!row) return NextResponse.json({ error: "not_found" }, { status: 404 });

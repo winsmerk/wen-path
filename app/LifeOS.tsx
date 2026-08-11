@@ -79,10 +79,11 @@ type Workspace = {
   footprintImages: FootprintImage[];
 };
 
-type Tab = "today" | "journeys" | "plan" | "records" | "finance" | "footprints" | "review";
+type Tab = "today" | "vision" | "journeys" | "plan" | "records" | "finance" | "footprints" | "review";
 
 const tabs: { key: Tab; label: string; mark: string }[] = [
   { key: "today", label: "今日", mark: "⌂" },
+  { key: "vision", label: "40岁愿景", mark: "✦" },
   { key: "journeys", label: "征程", mark: "◎" },
   { key: "plan", label: "计划", mark: "◫" },
   { key: "records", label: "记录", mark: "+" },
@@ -183,6 +184,7 @@ export default function LifeOS() {
   const completedMinutes = workspace.actions
     .filter((item) => item.status === "completed")
     .reduce((sum, item) => sum + item.estimated_minutes, 0);
+  const visionTime = visionCountdown(workspace.profile.target_date);
 
   return (
     <div className="app-shell">
@@ -195,11 +197,11 @@ export default function LifeOS() {
             </button>
           ))}
         </nav>
-        <div className="vision-mini">
+        <button type="button" className={tab === "vision" ? "vision-mini active" : "vision-mini"} onClick={() => setTab("vision")}>
           <span className="eyebrow">40岁愿景</span>
-          <p>在大多数普通日子里，我喜欢自己的生活。</p>
-          <div className="years-row"><span>还有 8 年</span><i><b /></i></div>
-        </div>
+          <p>{workspace.profile.vision}</p>
+          <div className="years-row"><span>还有 {visionTime.years} 年 {visionTime.months} 个月</span><i><b /></i></div>
+        </button>
         <div className="user-row"><span className="avatar">文</span><span><strong>{workspace.profile.display_name}</strong><small>建立基线 · 第1阶段</small></span></div>
       </aside>
 
@@ -220,6 +222,7 @@ export default function LifeOS() {
             onNavigate={setTab}
           />
         )}
+        {tab === "vision" && <Vision profile={workspace.profile} journeys={workspace.journeys} actions={workspace.actions} busy={saving} mutate={mutate} />}
         {tab === "journeys" && <Journeys items={workspace.journeys} busy={saving} mutate={mutate} />}
         {tab === "plan" && <Plan profile={workspace.profile} outcomes={workspace.outcomes} actions={workspace.actions} busy={saving} mutate={mutate} onComplete={setCompletingAction} />}
         {tab === "records" && <Records items={workspace.checkins} outputs={workspace.taskOutputs} messages={workspace.englishMessages} busy={saving} onCheckin={setCheckinType} mutate={mutate} />}
@@ -264,6 +267,61 @@ export default function LifeOS() {
 
 function Brand() {
   return <div className="brand"><span className="brand-seed">W</span><span className="brand-copy"><strong>wen flow</strong><small>Build a life you love.</small></span></div>;
+}
+
+function visionCountdown(targetDate: string) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const target = new Date(`${targetDate}T00:00:00`);
+  if (!Number.isFinite(target.getTime()) || target <= today) return { years: 0, months: 0, days: 0, totalDays: 0 };
+  let years = target.getFullYear() - today.getFullYear();
+  let months = target.getMonth() - today.getMonth();
+  let days = target.getDate() - today.getDate();
+  if (days < 0) {
+    months -= 1;
+    days += new Date(target.getFullYear(), target.getMonth(), 0).getDate();
+  }
+  if (months < 0) { years -= 1; months += 12; }
+  return { years, months, days, totalDays: Math.ceil((target.getTime() - today.getTime()) / 86_400_000) };
+}
+
+function Vision({ profile, journeys, actions, busy, mutate }: { profile: Profile; journeys: Journey[]; actions: Action[]; busy: boolean; mutate: (payload: Record<string, unknown>, success?: string) => Promise<boolean> }) {
+  const [editing, setEditing] = useState(false);
+  const remaining = visionCountdown(profile.target_date);
+  const completedJourneys = journeys.filter((item) => item.status === "completed");
+  const completedActions = actions.filter((item) => item.status === "completed");
+  const future = journeys.filter((item) => item.status !== "completed").sort((a, b) => (a.status === "active" ? -1 : b.status === "active" ? 1 : b.progress - a.progress));
+  const targetLabel = new Date(`${profile.target_date}T00:00:00`).toLocaleDateString("zh-CN", { year: "numeric", month: "long", day: "numeric" });
+  return <>
+    <PageHeader kicker="把愿景变成看得见的路" title="40岁愿景"><button className="primary-button" onClick={() => setEditing(true)}>编辑愿景</button></PageHeader>
+    <section className="vision-hero-card">
+      <span className="eyebrow">My North Star</span>
+      <blockquote>{profile.vision}</blockquote>
+      <div><span>目标日期</span><b>{targetLabel}</b></div>
+    </section>
+    <section className="vision-countdown" aria-label="距离愿景的时间">
+      <div><b>{remaining.years}</b><span>年</span></div><i>·</i><div><b>{remaining.months}</b><span>个月</span></div><i>·</i><div><b>{remaining.days}</b><span>天</span></div>
+      <p>距离愿景还有 <strong>{remaining.totalDays.toLocaleString("zh-CN")}</strong> 天。时间不是压力，是帮助你选择优先级的边界。</p>
+    </section>
+    <section className="vision-roadmap">
+      <article className="vision-column completed">
+        <div className="section-heading"><div><span className="eyebrow">Evidence</span><h3>已经完成的重要事项</h3></div><b className="vision-count">{completedJourneys.length || completedActions.length}</b></div>
+        <div className="vision-items">{completedJourneys.length ? completedJourneys.map((item) => <div className="vision-item done" key={item.id}><span>✓</span><div><small>{item.area} · 第 {item.sequence_number} 次征程</small><b>{item.title}</b><p>{item.acceptance_criteria}</p></div></div>) : completedActions.length ? completedActions.slice(0, 8).map((item) => <div className="vision-item done" key={item.id}><span>✓</span><div><small>已完成行动</small><b>{item.title}</b><p>这一步已经成为通往愿景的真实证据。</p></div></div>) : <div className="empty-list"><b>第一项重要成果正在路上</b><p>完成一次征程后，它会沉淀在这里。</p></div>}</div>
+      </article>
+      <article className="vision-column future">
+        <div className="section-heading"><div><span className="eyebrow">The Road Ahead</span><h3>未来要做的事情</h3></div><b className="vision-count">{future.length}</b></div>
+        <div className="vision-items">{future.slice(0, 10).map((item) => <div className={`vision-item ${item.status}`} key={item.id}><span>{item.status === "active" ? "→" : item.sequence_number}</span><div><small>{item.status === "active" ? "正在推进" : "未来征程"} · {item.area}</small><b>{item.title}</b><p>{item.next_action}</p><i><b style={{ width: `${item.progress}%` }} /></i></div></div>)}</div>
+      </article>
+    </section>
+    {editing && <VisionDialog profile={profile} busy={busy} onClose={() => setEditing(false)} onSave={async (vision, targetDate) => { const ok = await mutate({ action: "update-vision", vision, targetDate }, "愿景已更新"); if (ok) setEditing(false); }} />}
+  </>;
+}
+
+function VisionDialog({ profile, busy, onClose, onSave }: { profile: Profile; busy: boolean; onClose: () => void; onSave: (vision: string, targetDate: string) => Promise<void> }) {
+  const [vision, setVision] = useState(profile.vision);
+  const [targetDate, setTargetDate] = useState(profile.target_date);
+  async function submit(event: FormEvent) { event.preventDefault(); await onSave(vision, targetDate); }
+  return <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><form className="dialog vision-dialog" onSubmit={submit}><button type="button" className="dialog-close" onClick={onClose}>×</button><span className="eyebrow">40岁愿景</span><h2>编辑我的北极星</h2><p>写下你真正想抵达的生活，以及希望实现它的时间。</p><label><span>愿景详细信息</span><textarea required maxLength={2000} value={vision} onChange={(event) => setVision(event.target.value)} placeholder="40岁时，我希望……" /></label><label><span>目标日期</span><input required type="date" value={targetDate} onChange={(event) => setTargetDate(event.target.value)} /></label><div className="dialog-actions"><button type="button" className="soft-button" onClick={onClose}>取消</button><button className="primary-button" disabled={busy || !vision.trim()}>{busy ? "正在保存…" : "保存愿景"}</button></div></form></div>;
 }
 
 function MobileHeader() {
