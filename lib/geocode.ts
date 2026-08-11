@@ -15,7 +15,6 @@ export async function geocodePlace(name: string): Promise<PlaceGeometry | null> 
     q: name,
     format: "jsonv2",
     limit: "8",
-    layer: "address",
     polygon_geojson: "1",
     polygon_threshold: "0.001",
   });
@@ -29,7 +28,7 @@ export async function geocodePlace(name: string): Promise<PlaceGeometry | null> 
   });
   if (!response.ok) return null;
   const places = await response.json() as NominatimResult[];
-  const place = places.find((candidate) => candidate.geojson?.type === "Polygon" || candidate.geojson?.type === "MultiPolygon") ?? places[0];
+  const place = places[0];
   const latitude = Number(place?.lat);
   const longitude = Number(place?.lon);
   if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;

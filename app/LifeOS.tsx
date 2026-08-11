@@ -547,14 +547,15 @@ function Footprints({ items, images, onReload }: { items: Footprint[]; images: F
   const visitedCount = items.filter((item) => item.status === "visited").length;
   const wishlistCount = items.filter((item) => item.status === "wishlist").length;
   useEffect(() => {
-    const missing = items.find((item) => (item.latitude === null || item.geometry_version < 2) && !attemptedGeocodes.current.has(item.id));
+    const needsGeocoding = (item: Footprint) => (item.latitude === null || item.geometry_version < 3) && !attemptedGeocodes.current.has(item.id);
+    const missing = items.find((item) => item.id === selectedId && needsGeocoding(item)) ?? items.find(needsGeocoding);
     if (!missing || geocoding) return;
     attemptedGeocodes.current.add(missing.id);
     setGeocoding(missing.id);
     void fetch("/api/footprint-geocode", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: missing.id }) })
       .then((response) => response.ok ? onReload() : undefined)
       .finally(() => window.setTimeout(() => setGeocoding(""), 1100));
-  }, [geocoding, items, onReload]);
+  }, [geocoding, items, onReload, selectedId]);
   return <>
     <PageHeader kicker="把世界变成生活的证据" title="我的足迹"><button className="primary-button" onClick={() => setEditing("new")}>＋ 留下足迹</button></PageHeader>
     <div className="footprint-summary"><div><b>{visitedCount}</b><span>已点亮</span></div><div><b>{wishlistCount}</b><span>想去的地方</span></div><p>去过的地方会点亮为实心坐标，想去的地方会保留为下一段旅程。</p></div>

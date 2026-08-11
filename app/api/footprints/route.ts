@@ -41,15 +41,15 @@ export async function POST(request: Request) {
   if (suppliedId) {
     const existing = await db.prepare("SELECT id,name,latitude,longitude,geometry_json,geometry_version FROM footprints WHERE id=? AND user_id=?").bind(id, identity.userId).first<{ id: string; name: string; latitude: number | null; longitude: number | null; geometry_json: string | null; geometry_version: number }>();
     if (!existing) return NextResponse.json({ error: "not_found" }, { status: 404 });
-    geography = existing.name === name && existing.latitude !== null && existing.longitude !== null && existing.geometry_version >= 2
+    geography = existing.name === name && existing.latitude !== null && existing.longitude !== null && existing.geometry_version >= 3
       ? { latitude: existing.latitude, longitude: existing.longitude, geometryJson: existing.geometry_json }
       : await geocodePlace(name);
     await db.prepare("UPDATE footprints SET name=?,status=?,content=?,visited_at=?,latitude=?,longitude=?,geometry_json=?,geometry_version=?,updated_at=? WHERE id=? AND user_id=?")
-      .bind(name, status, content, visitedAt, geography?.latitude ?? null, geography?.longitude ?? null, geography?.geometryJson ?? null, geography ? 2 : 0, now, id, identity.userId).run();
+      .bind(name, status, content, visitedAt, geography?.latitude ?? null, geography?.longitude ?? null, geography?.geometryJson ?? null, geography ? 3 : 0, now, id, identity.userId).run();
   } else {
     geography = await geocodePlace(name);
     await db.prepare("INSERT INTO footprints (id,user_id,name,status,content,visited_at,latitude,longitude,geometry_json,geometry_version,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)")
-      .bind(id, identity.userId, name, status, content, visitedAt, geography?.latitude ?? null, geography?.longitude ?? null, geography?.geometryJson ?? null, geography ? 2 : 0, now, now).run();
+      .bind(id, identity.userId, name, status, content, visitedAt, geography?.latitude ?? null, geography?.longitude ?? null, geography?.geometryJson ?? null, geography ? 3 : 0, now, now).run();
   }
 
   if (media && files.length) {
