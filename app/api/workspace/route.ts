@@ -165,6 +165,8 @@ export async function POST(request: Request) {
     if (body.action === "add-weekly-action") { const priority = await db.prepare("SELECT COALESCE(MAX(priority),0) AS value FROM weekly_actions WHERE user_id=?").bind(identity.userId).first<{value:number}>(); await db.prepare("INSERT INTO weekly_actions (id,user_id,outcome_id,title,estimated_minutes,scheduled_for,priority,status,task_type,source) VALUES (?,?,?,?,?,?,?,'pending',?,'manual')").bind(crypto.randomUUID(),identity.userId,outcomeId,title,minutes,scheduledFor,(priority?.value??0)+1,taskType).run(); }
     else if (typeof body.id === "string") await db.prepare("UPDATE weekly_actions SET outcome_id=?,title=?,estimated_minutes=?,scheduled_for=?,task_type=?,source='manual' WHERE id=? AND user_id=?").bind(outcomeId,title,minutes,scheduledFor,taskType,body.id,identity.userId).run();
     else return NextResponse.json({ error: "missing_id" }, { status: 400 });
+  } else if (body.action === "delete-weekly-action" && typeof body.id === "string") {
+    await db.prepare("DELETE FROM weekly_actions WHERE id=? AND user_id=?").bind(body.id,identity.userId).run();
   } else if (body.action === "generate-week-plan") {
     const [profile, journeyRows] = await Promise.all([
       db.prepare("SELECT vision, weekly_capacity_minutes, weekly_goal FROM profiles WHERE user_id = ?").bind(identity.userId).first<{ vision: string; weekly_capacity_minutes: number; weekly_goal: string }>(),

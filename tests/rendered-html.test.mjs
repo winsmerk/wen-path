@@ -52,6 +52,7 @@ test("ships product metadata, adaptive planning, and database declaration", asyn
   assert.match(workspaceApi, /dimensions\.size >= 2/);
   assert.match(workspaceApi, /add-outcome/);
   assert.match(workspaceApi, /update-weekly-action/);
+  assert.match(workspaceApi, /delete-weekly-action/);
   assert.match(hosting, /"d1": "DB"/);
   assert.match(hosting, /"r2": "MEDIA"/);
 });
