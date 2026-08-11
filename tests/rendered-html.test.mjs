@@ -47,12 +47,15 @@ test("ships product metadata, adaptive planning, and database declaration", asyn
   assert.match(lifeOS, /新增月度成果/);
   assert.match(lifeOS, /新增周任务/);
   assert.match(lifeOS, /关联月度成果/);
+  assert.match(lifeOS, /提交一篇读书笔记/);
+  assert.match(lifeOS, /英语学习笔记/);
   assert.match(workspaceApi, /完整愿景/);
   assert.match(workspaceApi, /本周目标是主线/);
   assert.match(workspaceApi, /dimensions\.size >= 2/);
   assert.match(workspaceApi, /add-outcome/);
   assert.match(workspaceApi, /update-weekly-action/);
   assert.match(workspaceApi, /delete-weekly-action/);
+  assert.match(workspaceApi, /note_required/);
   assert.match(hosting, /"d1": "DB"/);
   assert.match(hosting, /"r2": "MEDIA"/);
 });

@@ -181,8 +181,10 @@ export async function POST(request: Request) {
     const maxPriority = await db.prepare("SELECT COALESCE(MAX(priority),0) AS value FROM weekly_actions WHERE user_id = ?").bind(identity.userId).first<{ value: number }>();
     await db.batch(plan.map((item, index) => db.prepare("INSERT INTO weekly_actions (id,user_id,outcome_id,title,estimated_minutes,scheduled_for,priority,status,task_type,source) VALUES (?,?,?,?,?,?,?,'pending',?,'ai')").bind(crypto.randomUUID(), identity.userId, `${identity.userId}-${item.type === "reading" ? "career" : item.type}`, item.title, item.minutes, item.day, (maxPriority?.value ?? 0) + index + 1, item.type)));
     await db.prepare("UPDATE profiles SET weekly_capacity_minutes = ?, weekly_goal = ?, updated_at = ? WHERE user_id = ?").bind(capacity, goal, now, identity.userId).run();
-  } else if (body.action === "checkin" && (body.type === "exercise" || body.type === "english")) {
-    await db.prepare("INSERT INTO checkins (id,user_id,type,duration,note,created_at) VALUES (?,?,?,?,?,?)").bind(crypto.randomUUID(), identity.userId, body.type, Math.max(0, Math.min(600, Number(body.duration) || 0)), clean(body.note, 300), now).run();
+  } else if (body.action === "checkin" && (body.type === "exercise" || body.type === "english" || body.type === "reading")) {
+    const note = clean(body.note, 3000);
+    if ((body.type === "english" || body.type === "reading") && !note) return NextResponse.json({ error: "note_required" }, { status: 400 });
+    await db.prepare("INSERT INTO checkins (id,user_id,type,duration,note,created_at) VALUES (?,?,?,?,?,?)").bind(crypto.randomUUID(), identity.userId, body.type, Math.max(0, Math.min(600, Number(body.duration) || 0)), note, now).run();
   } else if (body.action === "add-journey") {
     const title = clean(body.title, 80), area = clean(body.area, 30), acceptance = clean(body.acceptanceCriteria, 300), nextAction = clean(body.nextAction, 160);
     if (!title || !area || !acceptance || !nextAction) return NextResponse.json({ error: "missing_fields" }, { status: 400 });

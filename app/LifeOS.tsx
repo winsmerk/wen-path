@@ -51,7 +51,7 @@ type FootprintImage = { id: string; footprint_id: string };
 
 type Checkin = {
   id: string;
-  type: "exercise" | "english";
+  type: "exercise" | "english" | "reading";
   duration: number;
   note: string;
   created_at: string;
@@ -125,7 +125,7 @@ export default function LifeOS() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState("");
-  const [checkinType, setCheckinType] = useState<"exercise" | "english" | null>(null);
+  const [checkinType, setCheckinType] = useState<Checkin["type"] | null>(null);
   const [completingAction, setCompletingAction] = useState<Action | null>(null);
 
   const load = useCallback(async () => {
@@ -491,11 +491,11 @@ function Plan({ profile, outcomes, actions, busy, mutate, onComplete }: { profil
 
 function taskTypeLabel(type: Action["task_type"]) { return { reading: "阅读", finance: "财务", exercise: "运动", english: "英语", general: "通用" }[type]; }
 
-function Records({ items, outputs, messages, busy, onCheckin, mutate }: { items: Checkin[]; outputs: TaskOutput[]; messages: EnglishMessage[]; busy: boolean; onCheckin: (type: "exercise" | "english") => void; mutate: (payload: Record<string, unknown>, success?: string) => Promise<boolean> }) {
+function Records({ items, outputs, messages, busy, onCheckin, mutate }: { items: Checkin[]; outputs: TaskOutput[]; messages: EnglishMessage[]; busy: boolean; onCheckin: (type: Checkin["type"]) => void; mutate: (payload: Record<string, unknown>, success?: string) => Promise<boolean> }) {
   return <>
-    <PageHeader kicker="行动留下痕迹" title="记录"><div className="action-row"><button className="soft-button" onClick={() => onCheckin("exercise")}>＋ 运动</button><button className="soft-button" onClick={() => onCheckin("english")}>＋ 英语</button></div></PageHeader>
-    <div className="record-summary"><article><span className="quick-icon exercise">↗</span><div><small>本月运动</small><b>{items.filter((item) => item.type === "exercise").length} <em>/ 12次</em></b></div></article><article><span className="quick-icon english">Aa</span><div><small>本月英语</small><b>{items.filter((item) => item.type === "english").length} <em>/ 12次</em></b></div></article><article><span className="quick-icon finance">¥</span><div><small>财务基线</small><b>25% <em>已完成</em></b></div></article></div>
-    <section className="record-list"><div className="section-heading"><div><span className="eyebrow">最近记录</span><h3>每一次行动都在形成证据</h3></div></div>{items.length ? items.map((item) => <article key={item.id}><span className={`record-mark ${item.type}`}>{item.type === "exercise" ? "↗" : "Aa"}</span><div><b>{item.type === "exercise" ? "完成一次运动" : "完成一次英语练习"}</b><p>{item.note || "只记录完成，不给今天增加负担"}</p></div><span><b>{item.duration}分钟</b><small>{new Date(item.created_at).toLocaleDateString("zh-CN")}</small></span></article>) : <div className="empty-list"><b>还没有记录</b><p>今天完成后，10秒留下第一条证据。</p></div>}</section>
+    <PageHeader kicker="行动留下痕迹" title="记录"><div className="action-row"><button className="soft-button" onClick={() => onCheckin("reading")}>＋ 读书</button><button className="soft-button" onClick={() => onCheckin("exercise")}>＋ 运动</button><button className="soft-button" onClick={() => onCheckin("english")}>＋ 英语</button></div></PageHeader>
+    <div className="record-summary"><article><span className="quick-icon reading">书</span><div><small>本月读书</small><b>{items.filter((item) => item.type === "reading").length} <em>篇笔记</em></b></div></article><article><span className="quick-icon exercise">↗</span><div><small>本月运动</small><b>{items.filter((item) => item.type === "exercise").length} <em>/ 12次</em></b></div></article><article><span className="quick-icon english">Aa</span><div><small>本月英语</small><b>{items.filter((item) => item.type === "english").length} <em>/ 12次</em></b></div></article><article><span className="quick-icon finance">¥</span><div><small>财务基线</small><b>25% <em>已完成</em></b></div></article></div>
+    <section className="record-list"><div className="section-heading"><div><span className="eyebrow">最近记录</span><h3>每一次行动都在形成证据</h3></div></div>{items.length ? items.map((item) => <article key={item.id}><span className={`record-mark ${item.type}`}>{item.type === "exercise" ? "↗" : item.type === "reading" ? "书" : "Aa"}</span><div><b>{item.type === "exercise" ? "完成一次运动" : item.type === "reading" ? "提交一篇读书笔记" : "提交一篇英语学习笔记"}</b><p>{item.note || "只记录完成，不给今天增加负担"}</p></div><span><b>{item.duration}分钟</b><small>{new Date(item.created_at).toLocaleDateString("zh-CN")}</small></span></article>) : <div className="empty-list"><b>还没有记录</b><p>今天完成后，留下第一条行动证据。</p></div>}</section>
     <TaskOutputList outputs={outputs} />
     <EnglishCoach messages={messages} busy={busy} mutate={mutate} />
   </>;
@@ -791,9 +791,12 @@ function AdjustPlanDialog({ actions, busy, onClose, onAdjust }: {
   return <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section className="dialog adjust-dialog" role="dialog" aria-modal="true" aria-labelledby="adjust-title"><button className="dialog-close" onClick={onClose} aria-label="关闭">×</button><span className="ai-mark">✦</span><span className="eyebrow">基于当前容量</span><h2 id="adjust-title">调整本周计划</h2><div className="capacity-overview"><span><b>{hours}h</b>当前安排</span><i><b style={{ width: `${Math.min(100, minutes / 420 * 100)}%` }} /></i><span><b>7h</b>可用时间</span></div><p className="adjust-summary">{minutes <= 357 ? "当前安排留有约15%以上余量，不必为了填满时间继续加任务。" : minutes <= 420 ? "当前安排接近容量上限，如果精力偏低，建议主动缩小范围。" : "当前计划已经过载，建议先暂停低优先级任务。"}</p><div className="adjust-options"><button disabled={busy} onClick={() => onAdjust("pause-lowest", "已暂缓一项低优先级职业任务，为恢复留出空间")}><span>01</span><div><b>腾出恢复空间</b><small>暂缓优先级最低的非健康任务</small></div><i>约省 1h</i></button><button disabled={busy} onClick={() => onAdjust("shrink-scope", "已缩小一项职业任务的交付范围")}><span>02</span><div><b>缩小交付范围</b><small>保留成果方向，减少20分钟投入</small></div><i>少做一点</i></button>{pausedCount > 0 && <button disabled={busy} onClick={() => onAdjust("restore-paused", "已恢复本周暂缓的任务")}><span>03</span><div><b>恢复暂缓任务</b><small>把之前暂缓的行动重新放回本周</small></div><i>{pausedCount} 项</i></button>}</div><small className="explain-note">所有调整都需要你确认；系统不会自动增加任务。</small></section></div>;
 }
 
-function CheckinDialog({ type, busy, onClose, onSubmit }: { type: "exercise" | "english"; busy: boolean; onClose: () => void; onSubmit: (duration: number, note: string) => void }) {
+function CheckinDialog({ type, busy, onClose, onSubmit }: { type: Checkin["type"]; busy: boolean; onClose: () => void; onSubmit: (duration: number, note: string) => void }) {
   const [duration, setDuration] = useState(type === "exercise" ? 45 : 30);
   const [note, setNote] = useState("");
-  const label = type === "exercise" ? "运动" : "英语";
-  return <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section className="dialog" role="dialog" aria-modal="true" aria-labelledby="dialog-title"><button className="dialog-close" onClick={onClose} aria-label="关闭">×</button><span className={`record-mark ${type}`}>{type === "exercise" ? "↗" : "Aa"}</span><span className="eyebrow">快速记录</span><h2 id="dialog-title">完成一次{label}</h2><p>先留下完成证据，细节以后也可以补充。</p><label><span>投入时间</span><div className="duration-row">{[20, 30, 45, 60].map((value) => <button type="button" key={value} className={duration === value ? "active" : ""} onClick={() => setDuration(value)}>{value}分钟</button>)}</div></label><label><span>一句备注（可选）</span><input value={note} onChange={(event) => setNote(event.target.value)} placeholder={type === "exercise" ? "今天身体感觉如何？" : "今天练习了什么？"} /></label><button className="primary-button full" disabled={busy} onClick={() => onSubmit(duration, note)}>{busy ? "正在保存…" : "记录完成"}</button></section></div>;
+  const label = type === "exercise" ? "运动" : type === "reading" ? "读书" : "英语学习";
+  const noteRequired = type === "reading" || type === "english";
+  const noteLabel = type === "reading" ? "读书笔记" : type === "english" ? "英语学习笔记" : "运动感受（可选）";
+  const placeholder = type === "reading" ? "记录核心观点、触动你的内容，以及准备如何应用……" : type === "english" ? "记录新表达、错误、纠正和下一步练习重点……" : "今天身体感觉如何？";
+  return <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section className="dialog checkin-dialog" role="dialog" aria-modal="true" aria-labelledby="dialog-title"><button className="dialog-close" onClick={onClose} aria-label="关闭">×</button><span className={`record-mark ${type}`}>{type === "exercise" ? "↗" : type === "reading" ? "书" : "Aa"}</span><span className="eyebrow">快速记录</span><h2 id="dialog-title">完成一次{label}</h2><p>{noteRequired ? "提交笔记后，这次学习才会被记录。" : "记录时间和感受，观察身体的真实变化。"}</p><label><span>投入时间</span><div className="duration-row">{[20, 30, 45, 60].map((value) => <button type="button" key={value} className={duration === value ? "active" : ""} onClick={() => setDuration(value)}>{value}分钟</button>)}</div></label><label><span>{noteLabel}</span>{noteRequired ? <textarea required value={note} onChange={(event) => setNote(event.target.value)} placeholder={placeholder} /> : <input value={note} onChange={(event) => setNote(event.target.value)} placeholder={placeholder} />}</label><button className="primary-button full" disabled={busy || (noteRequired && !note.trim())} onClick={() => onSubmit(duration, note)}>{busy ? "正在保存…" : noteRequired ? "提交笔记并记录" : "记录完成"}</button></section></div>;
 }
