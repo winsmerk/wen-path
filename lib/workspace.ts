@@ -117,7 +117,7 @@ const vision =
   "40岁时，身体健康有力量；拥有足够好的英语和职业能力，可以选择在哪里生活、和谁工作；收入不依赖单一雇主；有能力经营家庭，也持续探索世界。最重要的是，在大多数普通日子里，我喜欢自己的生活。";
 
 const journeySeeds = [
-  [1, "建立真实财务基线", "财务与资产", "完成净资产表、月支出与应急金标准", "整理现金、房产和固定支出"],
+  [1, "建立真实财务基线", "财务与资产", "完成净资产表、月支出与应急金标准", "整理现金、固定资产、投资和固定支出"],
   [2, "建立可持续运动节奏", "健康", "连续4周每周运动至少3次", "完成本周第一次力量训练"],
   [3, "留下英语口语基准", "英语", "完成3分钟英文自我介绍录音", "写出英文自我介绍提纲"],
   [4, "整理职业项目地图", "职业", "列出10个项目并选出5个案例", "列出最重要的10个项目"],
@@ -139,7 +139,7 @@ const outcomeSeeds = [
 ] as const;
 
 const actionSeeds = [
-  ["a1", "finance", "整理现金、房产、收入与固定支出", 45, "周三", 1, "finance"],
+  ["a1", "finance", "整理现金、固定资产、投资、收入与固定支出", 45, "周三", 1, "finance"],
   ["a2", "english", "录制3分钟英文自我介绍", 35, "周四", 2, "english"],
   ["a3", "career", "列出10个重要职业项目", 60, "周六", 3, "general"],
   ["a4", "exercise", "完成3次运动", 135, "本周", 4, "exercise"],
@@ -191,9 +191,10 @@ export async function seedWorkspace(db: D1Database, identity: WorkspaceIdentity)
 
   await db.batch([...journeyStatements, ...outcomeStatements, ...actionStatements]);
   await db.batch([
-    db.prepare("UPDATE weekly_actions SET task_type = 'finance', source = 'seed' WHERE id = ? AND task_type = 'general'").bind(`${identity.userId}-a1`),
+    db.prepare("UPDATE weekly_actions SET task_type = 'finance', source = 'seed', title = '整理现金、固定资产、投资、收入与固定支出' WHERE id = ?").bind(`${identity.userId}-a1`),
     db.prepare("UPDATE weekly_actions SET task_type = 'english', source = 'seed' WHERE id = ? AND task_type = 'general'").bind(`${identity.userId}-a2`),
     db.prepare("UPDATE weekly_actions SET source = 'seed' WHERE id = ?").bind(`${identity.userId}-a3`),
     db.prepare("UPDATE weekly_actions SET task_type = 'exercise', source = 'seed' WHERE id = ? AND task_type = 'general'").bind(`${identity.userId}-a4`),
+    db.prepare("UPDATE journeys SET next_action = '整理现金、固定资产、投资和固定支出' WHERE id = ?").bind(`${identity.userId}-journey-1`),
   ]);
 }

@@ -38,7 +38,7 @@ async function askOpenAI(prompt: string) {
 
 function classify(goal: string) {
   if (/英语|英文|口语|English/i.test(goal)) return "english";
-  if (/财务|现金|房产|收入|支出|资产/.test(goal)) return "finance";
+  if (/财务|现金|固定资产|投资|房产|收入|支出|资产/.test(goal)) return "finance";
   if (/运动|健身|跑步|力量|健康/.test(goal)) return "exercise";
   if (/读书|阅读|书/.test(goal)) return "reading";
   return "general";
@@ -48,7 +48,7 @@ function fallbackPlan(goal: string, capacity: number): PlanItem[] {
   const type = classify(goal);
   const names: Record<string, string[]> = {
     reading: ["确定本周阅读范围与问题", "完成两次深度阅读", "整理并输出一篇读书笔记"],
-    finance: ["更新现金与房产数据", "补全本月收入和固定支出", "查看财务现状并写下一个决定"],
+    finance: ["更新现金、固定资产与投资数据", "补全本月收入和固定支出", "查看财务现状并写下一个决定"],
     exercise: ["完成第一次运动并记录感受", "完成第二次运动并观察恢复", "完成本周运动复盘"],
     english: ["用英语描述本周目标", "完成一次英语对话练习", "整理英语学习笔记并口头复述"],
     general: ["明确本周目标的完成标准", "推进最小可交付成果", "复盘结果并确定下一步"],
@@ -113,7 +113,7 @@ export async function POST(request: Request) {
     if (task.task_type === "exercise" && (!duration || !feeling)) return NextResponse.json({ error: "output_required" }, { status: 400 });
     if (task.task_type === "finance") {
       const category = clean(body.category, 30), amount = Number(body.amount);
-      if (!["cash", "property", "income", "fixed_expense"].includes(category) || !Number.isFinite(amount) || amount < 0) return NextResponse.json({ error: "finance_required" }, { status: 400 });
+      if (!["cash", "fixed_asset", "investment", "property", "income", "fixed_expense"].includes(category) || !Number.isFinite(amount) || amount < 0) return NextResponse.json({ error: "finance_required" }, { status: 400 });
       await db.prepare("INSERT INTO financial_records (id,user_id,action_id,category,amount,note,recorded_at,created_at) VALUES (?,?,?,?,?,?,?,?)").bind(crypto.randomUUID(), identity.userId, task.id, category, amount, content || task.title, clean(body.recordedAt, 10) || now.slice(0, 10), now).run();
     }
     await db.prepare("INSERT INTO task_outputs (id,user_id,action_id,task_type,title,content,duration,feeling,created_at) VALUES (?,?,?,?,?,?,?,?,?)").bind(crypto.randomUUID(), identity.userId, task.id, task.task_type, task.title, content, duration, feeling, now).run();
@@ -155,7 +155,7 @@ export async function POST(request: Request) {
     else return NextResponse.json({error:"invalid_adjustment"},{status:400});
   } else if (body.action === "financial-record") {
     const category = clean(body.category, 30), amount = Number(body.amount), actionId = clean(body.actionId, 80) || null;
-    if (!["cash","property","income","fixed_expense"].includes(category) || !Number.isFinite(amount) || amount < 0) return NextResponse.json({error:"invalid_finance"},{status:400});
+    if (!["cash","fixed_asset","investment","property","income","fixed_expense"].includes(category) || !Number.isFinite(amount) || amount < 0) return NextResponse.json({error:"invalid_finance"},{status:400});
     await db.prepare("INSERT INTO financial_records (id,user_id,action_id,category,amount,note,recorded_at,created_at) VALUES (?,?,?,?,?,?,?,?)").bind(crypto.randomUUID(),identity.userId,actionId,category,amount,clean(body.note,400),clean(body.recordedAt,10)||now.slice(0,10),now).run();
   } else if (body.action === "english-coach") {
     const message = clean(body.message,1200); if (!message) return NextResponse.json({error:"missing_message"},{status:400});
