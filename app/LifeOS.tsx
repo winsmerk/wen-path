@@ -7,6 +7,8 @@ type Profile = {
   vision: string;
   target_date: string;
   initialized: number;
+  weekly_capacity_minutes: number;
+  weekly_goal: string;
 };
 
 type Journey = {
@@ -37,7 +39,13 @@ type Action = {
   scheduled_for: string;
   priority: number;
   status: "pending" | "completed" | "paused";
+  task_type: "reading" | "finance" | "exercise" | "english" | "general";
+  source: "seed" | "ai" | "manual";
 };
+
+type TaskOutput = { id: string; action_id: string; task_type: Action["task_type"]; title: string; content: string; duration: number; feeling: string; created_at: string };
+type FinancialRecord = { id: string; action_id: string | null; category: "cash" | "property" | "income" | "fixed_expense"; amount: number; note: string; recorded_at: string };
+type EnglishMessage = { id: string; role: "user" | "assistant"; text: string; feedback: string; created_at: string };
 
 type Checkin = {
   id: string;
@@ -62,15 +70,19 @@ type Workspace = {
   actions: Action[];
   checkins: Checkin[];
   reviews: Review[];
+  taskOutputs: TaskOutput[];
+  financialRecords: FinancialRecord[];
+  englishMessages: EnglishMessage[];
 };
 
-type Tab = "today" | "journeys" | "plan" | "records" | "review";
+type Tab = "today" | "journeys" | "plan" | "records" | "finance" | "review";
 
 const tabs: { key: Tab; label: string; mark: string }[] = [
   { key: "today", label: "今日", mark: "⌂" },
   { key: "journeys", label: "征程", mark: "◎" },
   { key: "plan", label: "计划", mark: "◫" },
   { key: "records", label: "记录", mark: "+" },
+  { key: "finance", label: "财务", mark: "¥" },
   { key: "review", label: "复盘", mark: "↗" },
 ];
 
@@ -101,6 +113,7 @@ export default function LifeOS() {
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState("");
   const [checkinType, setCheckinType] = useState<"exercise" | "english" | null>(null);
+  const [completingAction, setCompletingAction] = useState<Action | null>(null);
 
   const load = useCallback(async () => {
     const response = await fetch("/api/workspace", { cache: "no-store" });
@@ -197,14 +210,15 @@ export default function LifeOS() {
             plannedMinutes={plannedMinutes}
             completedMinutes={completedMinutes}
             busy={saving}
-            onToggle={(id) => mutate({ action: "toggle-action", id }, "行动状态已更新")}
+            onToggle={(action) => action.status === "completed" ? mutate({ action: "toggle-action", id: action.id }, "已撤销完成") : setCompletingAction(action)}
             onCheckin={setCheckinType}
             onNavigate={setTab}
           />
         )}
         {tab === "journeys" && <Journeys items={workspace.journeys} busy={saving} mutate={mutate} />}
-        {tab === "plan" && <Plan outcomes={workspace.outcomes} actions={workspace.actions} busy={saving} mutate={mutate} />}
-        {tab === "records" && <Records items={workspace.checkins} onCheckin={setCheckinType} />}
+        {tab === "plan" && <Plan profile={workspace.profile} outcomes={workspace.outcomes} actions={workspace.actions} busy={saving} mutate={mutate} onComplete={setCompletingAction} />}
+        {tab === "records" && <Records items={workspace.checkins} outputs={workspace.taskOutputs} messages={workspace.englishMessages} busy={saving} onCheckin={setCheckinType} mutate={mutate} />}
+        {tab === "finance" && <Finance records={workspace.financialRecords} actions={workspace.actions} busy={saving} mutate={mutate} />}
         {tab === "review" && (
           <ReviewPanel
             completedActions={completedActions}
@@ -237,12 +251,13 @@ export default function LifeOS() {
           }}
         />
       )}
+      {completingAction && <TaskCompleteDialog action={completingAction} busy={saving} onClose={() => setCompletingAction(null)} onSubmit={async (values) => { const ok = await mutate({ action: "complete-task", id: completingAction.id, ...values }, "任务已完成，成果也记录好了"); if (ok) setCompletingAction(null); }} />}
     </div>
   );
 }
 
 function Brand() {
-  return <div className="brand"><strong>wen</strong></div>;
+  return <div className="brand"><span className="brand-mark">W</span><span className="brand-copy"><strong>wen path</strong><small>Build a life you love.</small></span></div>;
 }
 
 function MobileHeader() {
@@ -290,7 +305,7 @@ function Today(props: {
   plannedMinutes: number;
   completedMinutes: number;
   busy: boolean;
-  onToggle: (id: string) => void;
+  onToggle: (action: Action) => void;
   onCheckin: (type: "exercise" | "english") => void;
   onNavigate: (tab: Tab) => void;
 }) {
@@ -313,7 +328,7 @@ function Today(props: {
             <h2>{pending.title}</h2>
             <p className="focus-meta"><span>◷ {pending.estimated_minutes}分钟</span><span>·</span><span>对应首月成果</span></p>
             <div className="focus-reason"><b>为什么是它</b><p>这是建立职业与财务基线的关键输入，完成后能减少后续计划中的不确定性。</p></div>
-            <div className="action-row"><button className="primary-button" disabled={props.busy} onClick={() => props.onToggle(pending.id)}>✓ 完成行动</button><button className="soft-button" onClick={() => props.onNavigate("plan")}>调整今天</button></div>
+            <div className="action-row"><button className="primary-button" disabled={props.busy} onClick={() => props.onToggle(pending)}>✓ 完成行动</button><button className="soft-button" onClick={() => props.onNavigate("plan")}>调整今天</button></div>
           </> : <div className="empty-focus"><h2>今天的重点已经完成</h2><p>剩下的时间留给恢复或喜欢的生活。</p></div>}
         </article>
         <article className="week-card">
@@ -339,7 +354,7 @@ function Today(props: {
       </section>
 
       <section className="ai-note">
-        <span className="ai-mark">✦</span><div><span className="eyebrow">基于你的实际容量</span><p>本周计划约 {Math.round(props.plannedMinutes / 6) / 10} 小时，低于你的 7 小时可用时间。先完成职业项目清单，房产资料可以留到第三周。</p></div><button aria-label="查看建议详情">→</button>
+        <span className="ai-mark">✦</span><div><span className="eyebrow">基于你的实际容量</span><p>本周计划约 {Math.round(props.plannedMinutes / 6) / 10} 小时，可用时间为 {Math.round(props.workspace.profile.weekly_capacity_minutes / 6) / 10} 小时。目标：{props.workspace.profile.weekly_goal || "先完成当前最重要的行动"}</p></div><button aria-label="查看建议详情">→</button>
       </section>
     </>
   );
@@ -354,11 +369,12 @@ function OutcomeCard({ item, index }: { item: Outcome; index: number }) {
 function Journeys({ items, busy, mutate }: { items: Journey[]; busy: boolean; mutate: (payload: Record<string, unknown>, success?: string) => Promise<boolean> }) {
   const [filter, setFilter] = useState("全部");
   const [editing, setEditing] = useState<Journey | null>(null);
+  const [creating, setCreating] = useState(false);
   const areas = ["全部", "健康", "英语", "职业", "财务与资产", "收入", "关系与家庭", "探索与生活"];
   const visible = filter === "全部" ? items : items.filter((item) => item.area === filter);
   const activeCount = items.filter((item) => item.status === "active").length;
   return <>
-    <PageHeader kicker="32岁—40岁" title="100次征程"><div className="stage-chip"><span />当前激活 {activeCount}/5</div></PageHeader>
+    <PageHeader kicker="32岁—40岁" title="100次征程"><div className="action-row"><div className="stage-chip"><span />当前激活 {activeCount}/5</div><button className="primary-button" onClick={() => setCreating(true)}>＋ 添加征程</button></div></PageHeader>
     <div className="filter-row">{areas.map((area) => <button key={area} className={filter === area ? "active" : ""} onClick={() => setFilter(area)}>{area}</button>)}</div>
     <section className="journey-list">
       {visible.map((item) => <article key={item.id} className="journey-row">
@@ -368,6 +384,7 @@ function Journeys({ items, busy, mutate }: { items: Journey[]; busy: boolean; mu
       </article>)}
     </section>
     {editing && <JourneyDialog journey={editing} busy={busy} onClose={() => setEditing(null)} onSave={async (values) => { const ok = await mutate({ action: "update-journey", id: editing.id, ...values }, "征程内容已更新"); if (ok) setEditing(null); }} onDelete={async () => { const ok = await mutate({ action: "delete-journey", id: editing.id }, "征程已删除"); if (ok) setEditing(null); }} />}
+    {creating && <JourneyCreateDialog busy={busy} onClose={() => setCreating(false)} onSave={async (values) => { const ok = await mutate({ action: "add-journey", ...values }, "新的征程已加入路线"); if (ok) setCreating(false); }} />}
   </>;
 }
 
@@ -375,29 +392,67 @@ function statusLabel(status: Journey["status"]) {
   return { active: "进行中", planned: "待开始", paused: "已暂停", completed: "已完成" }[status];
 }
 
-function Plan({ outcomes, actions, busy, mutate }: { outcomes: Outcome[]; actions: Action[]; busy: boolean; mutate: (payload: Record<string, unknown>, success?: string) => Promise<boolean> }) {
+function Plan({ profile, outcomes, actions, busy, mutate, onComplete }: { profile: Profile; outcomes: Outcome[]; actions: Action[]; busy: boolean; mutate: (payload: Record<string, unknown>, success?: string) => Promise<boolean>; onComplete: (action: Action) => void }) {
   const [adjusting, setAdjusting] = useState(false);
+  const [settings, setSettings] = useState(false);
   const activeActions = actions.filter((item) => item.status !== "paused");
   const weeklyMinutes = activeActions.reduce((sum, item) => sum + item.estimated_minutes, 0);
   const weeklyHours = Math.round(weeklyMinutes / 6) / 10;
   return <>
-    <PageHeader kicker="2026年8月12日—9月11日" title="首月计划"><button className="soft-button" onClick={() => setAdjusting(true)}>帮我调整计划</button></PageHeader>
+    <PageHeader kicker="每周根据目标动态规划" title="本周计划"><div className="action-row"><button className="soft-button" onClick={() => setSettings(true)}>配置时间与目标</button><button className="soft-button" onClick={() => setAdjusting(true)}>帮我调整计划</button></div></PageHeader>
+    <section className="week-goal-card"><div><span className="eyebrow">本周目标</span><h3>{profile.weekly_goal || "还没有填写本周目标"}</h3><p>系统会保留约 15% 的时间余量，再生成可执行任务。</p></div><div><b>{Math.round(profile.weekly_capacity_minutes / 6) / 10}h</b><small>本周可用</small></div><button className="primary-button" disabled={busy} onClick={() => mutate({ action: "generate-week-plan" }, "已结合目标生成新的本周计划")}>{busy ? "生成中…" : "✦ AI 生成计划"}</button></section>
     <div className="plan-summary"><div><span>核心成果</span><b>4</b><small>保持少而重要</small></div><div><span>预计投入</span><b>{outcomes.reduce((sum, item) => sum + item.expected_hours, 0)}h</b><small>每周约 7 小时</small></div><div><span>明确不做</span><b>3</b><small>课程、社群、重型副业</small></div></div>
     <section className="plan-layout">
       <div><div className="section-heading"><div><span className="eyebrow">月度成果</span><h3>完成标准清晰，才算真正完成</h3></div></div><div className="plan-outcomes">{outcomes.map((item, index) => <OutcomeCard item={item} index={index} key={item.id} />)}</div></div>
-      <div className="weekly-panel"><div className="section-heading"><div><span className="eyebrow">本周重点</span><h3>{actions.filter((item) => item.status === "completed").length}/{activeActions.length} 已完成</h3></div><span className="capacity-badge">{weeklyHours}h / 7h</span></div>{actions.map((item) => <label key={item.id} className={`task-row ${item.status}`}><input aria-label={`${item.title}完成状态`} type="checkbox" checked={item.status === "completed"} disabled={busy || item.status === "paused"} onChange={() => mutate({ action: "toggle-action", id: item.id })} /><span><b>{item.title}</b><small>{item.status === "paused" ? "本周暂缓" : `${item.scheduled_for} · ${item.estimated_minutes}分钟`}</small></span></label>)}</div>
+      <div className="weekly-panel"><div className="section-heading"><div><span className="eyebrow">本周重点</span><h3>{actions.filter((item) => item.status === "completed").length}/{activeActions.length} 已完成</h3></div><span className="capacity-badge">{weeklyHours}h / {Math.round(profile.weekly_capacity_minutes / 6) / 10}h</span></div>{actions.map((item) => <label key={item.id} className={`task-row ${item.status}`}><input aria-label={`${item.title}完成状态`} type="checkbox" checked={item.status === "completed"} disabled={busy || item.status === "paused"} onChange={() => item.status === "completed" ? mutate({ action: "toggle-action", id: item.id }, "已撤销完成") : onComplete(item)} /><span><b>{item.title}</b><small><i className={`task-type ${item.task_type}`}>{taskTypeLabel(item.task_type)}</i>{item.status === "paused" ? "本周暂缓" : `${item.scheduled_for} · ${item.estimated_minutes}分钟`}{item.source === "ai" ? " · AI生成" : ""}</small></span></label>)}</div>
     </section>
     {adjusting && <AdjustPlanDialog actions={actions} busy={busy} onClose={() => setAdjusting(false)} onAdjust={async (mode, message) => { const ok = await mutate({ action: "adjust-plan", mode }, message); if (ok) setAdjusting(false); }} />}
+    {settings && <WeeklySettingsDialog profile={profile} busy={busy} onClose={() => setSettings(false)} onSave={async (capacityMinutes, goal, generate) => { const ok = await mutate({ action: generate ? "generate-week-plan" : "weekly-settings", capacityMinutes, goal }, generate ? "已生成匹配本周目标的新计划" : "本周时间与目标已保存"); if (ok) setSettings(false); }} />}
   </>;
 }
 
-function Records({ items, onCheckin }: { items: Checkin[]; onCheckin: (type: "exercise" | "english") => void }) {
+function taskTypeLabel(type: Action["task_type"]) { return { reading: "阅读", finance: "财务", exercise: "运动", english: "英语", general: "通用" }[type]; }
+
+function Records({ items, outputs, messages, busy, onCheckin, mutate }: { items: Checkin[]; outputs: TaskOutput[]; messages: EnglishMessage[]; busy: boolean; onCheckin: (type: "exercise" | "english") => void; mutate: (payload: Record<string, unknown>, success?: string) => Promise<boolean> }) {
   return <>
     <PageHeader kicker="行动留下痕迹" title="记录"><div className="action-row"><button className="soft-button" onClick={() => onCheckin("exercise")}>＋ 运动</button><button className="soft-button" onClick={() => onCheckin("english")}>＋ 英语</button></div></PageHeader>
     <div className="record-summary"><article><span className="quick-icon exercise">↗</span><div><small>本月运动</small><b>{items.filter((item) => item.type === "exercise").length} <em>/ 12次</em></b></div></article><article><span className="quick-icon english">Aa</span><div><small>本月英语</small><b>{items.filter((item) => item.type === "english").length} <em>/ 12次</em></b></div></article><article><span className="quick-icon finance">¥</span><div><small>财务基线</small><b>25% <em>已完成</em></b></div></article></div>
     <section className="record-list"><div className="section-heading"><div><span className="eyebrow">最近记录</span><h3>每一次行动都在形成证据</h3></div></div>{items.length ? items.map((item) => <article key={item.id}><span className={`record-mark ${item.type}`}>{item.type === "exercise" ? "↗" : "Aa"}</span><div><b>{item.type === "exercise" ? "完成一次运动" : "完成一次英语练习"}</b><p>{item.note || "只记录完成，不给今天增加负担"}</p></div><span><b>{item.duration}分钟</b><small>{new Date(item.created_at).toLocaleDateString("zh-CN")}</small></span></article>) : <div className="empty-list"><b>还没有记录</b><p>今天完成后，10秒留下第一条证据。</p></div>}</section>
+    <TaskOutputList outputs={outputs} />
+    <EnglishCoach messages={messages} busy={busy} mutate={mutate} />
   </>;
 }
+
+function TaskOutputList({ outputs }: { outputs: TaskOutput[] }) {
+  if (!outputs.length) return null;
+  return <section className="record-list output-list"><div className="section-heading"><div><span className="eyebrow">任务成果</span><h3>完成不只是打勾</h3></div></div>{outputs.slice(0, 12).map((item) => <article key={item.id}><span className={`record-mark ${item.task_type}`}>{item.task_type === "reading" ? "书" : item.task_type === "finance" ? "¥" : item.task_type === "exercise" ? "↗" : item.task_type === "english" ? "Aa" : "✓"}</span><div><b>{item.title}</b><p>{item.content || item.feeling || "已记录完成成果"}</p></div><span><b>{taskTypeLabel(item.task_type)}</b><small>{new Date(item.created_at).toLocaleDateString("zh-CN")}</small></span></article>)}</section>;
+}
+
+function EnglishCoach({ messages, busy, mutate }: { messages: EnglishMessage[]; busy: boolean; mutate: (payload: Record<string, unknown>, success?: string) => Promise<boolean> }) {
+  const [message, setMessage] = useState("");
+  const [listening, setListening] = useState(false);
+  const latestReply = [...messages].reverse().find((item) => item.role === "assistant");
+  function speak(text: string) { if ("speechSynthesis" in window) { window.speechSynthesis.cancel(); window.speechSynthesis.speak(new SpeechSynthesisUtterance(text)); } }
+  function listen() {
+    const Speech = (window as unknown as { SpeechRecognition?: new () => { lang: string; start: () => void; onresult: (event: { results: { 0: { 0: { transcript: string } } }[] }) => void; onend: () => void }; webkitSpeechRecognition?: new () => { lang: string; start: () => void; onresult: (event: { results: { 0: { 0: { transcript: string } } }[] }) => void; onend: () => void } }).SpeechRecognition || (window as unknown as { webkitSpeechRecognition?: new () => { lang: string; start: () => void; onresult: (event: { results: { 0: { 0: { transcript: string } } }[] }) => void; onend: () => void } }).webkitSpeechRecognition;
+    if (!Speech) { setMessage("My browser does not support speech recognition, so I am typing instead."); return; }
+    const recognition = new Speech(); recognition.lang = "en-US"; recognition.onresult = (event) => setMessage(event.results[0][0].transcript); recognition.onend = () => setListening(false); setListening(true); recognition.start();
+  }
+  async function submit(event: FormEvent) { event.preventDefault(); if (!message.trim()) return; const ok = await mutate({ action: "english-coach", message }, "Coach 已给出反馈"); if (ok) setMessage(""); }
+  return <section className="english-coach"><div className="section-heading"><div><span className="eyebrow">English Coach</span><h3>对话、纠正与口语训练</h3></div>{latestReply && <button className="soft-button" onClick={() => speak(latestReply.text)}>▶ 播放回复</button>}</div><div className="chat-log">{messages.length ? messages.slice(-8).map((item) => <div key={item.id} className={`chat-bubble ${item.role}`}><b>{item.role === "user" ? "You" : "Coach"}</b><p>{item.text}</p>{item.feedback && <small>{item.feedback}</small>}</div>) : <div className="empty-list"><b>Start with one sentence.</b><p>Try: “This week, I want to…”</p></div>}</div><form className="coach-input" onSubmit={submit}><textarea value={message} onChange={(event) => setMessage(event.target.value)} placeholder="用英语输入，或点击麦克风开始口语…" /><div><button type="button" className="soft-button" onClick={listen}>{listening ? "正在聆听…" : "◉ 开始口语"}</button><button className="primary-button" disabled={busy || !message.trim()}>发送给 Coach</button></div></form></section>;
+}
+
+function Finance({ records, actions, busy, mutate }: { records: FinancialRecord[]; actions: Action[]; busy: boolean; mutate: (payload: Record<string, unknown>, success?: string) => Promise<boolean> }) {
+  const [adding, setAdding] = useState(false);
+  const latest = (category: FinancialRecord["category"]) => records.find((item) => item.category === category)?.amount ?? 0;
+  const month = new Date().toISOString().slice(0, 7);
+  const flow = (category: FinancialRecord["category"]) => records.filter((item) => item.category === category && item.recorded_at.startsWith(month)).reduce((sum, item) => sum + item.amount, 0);
+  const cash = latest("cash"), property = latest("property"), income = flow("income"), expense = flow("fixed_expense");
+  const currency = (value: number) => `¥${value.toLocaleString("zh-CN", { maximumFractionDigits: 2 })}`;
+  return <><PageHeader kicker="现金流与资产底盘" title="当前财务情况"><button className="primary-button" onClick={() => setAdding(true)}>＋ 添加财务记录</button></PageHeader><div className="finance-grid"><article><span>可用现金</span><b>{currency(cash)}</b><small>最新快照</small></article><article><span>房产价值</span><b>{currency(property)}</b><small>最新快照</small></article><article><span>本月收入</span><b>{currency(income)}</b><small>累计记录</small></article><article><span>固定支出</span><b>{currency(expense)}</b><small>本月累计</small></article><article className="net-worth"><span>当前资产</span><b>{currency(cash + property)}</b><small>现金 + 房产</small></article><article><span>结余率</span><b>{income ? `${Math.round((income - expense) / income * 100)}%` : "—"}</b><small>收入减固定支出</small></article></div><section className="finance-list"><div className="section-heading"><div><span className="eyebrow">全部财务记录</span><h3>每笔数据都可追溯到任务</h3></div></div>{records.length ? records.map((item) => <article key={item.id}><span className={`finance-category ${item.category}`}>{financeLabel(item.category)}</span><div><b>{currency(item.amount)}</b><p>{item.note || "未填写备注"}{item.action_id ? ` · 关联：${actions.find((action) => action.id === item.action_id)?.title || "任务"}` : ""}</p></div><time>{new Date(item.recorded_at).toLocaleDateString("zh-CN")}</time></article>) : <div className="empty-list"><b>还没有财务数据</b><p>添加现金、房产、收入或固定支出，形成第一张财务快照。</p></div>}</section>{adding && <FinanceDialog actions={actions} busy={busy} onClose={() => setAdding(false)} onSave={async (values) => { const ok = await mutate({ action: "financial-record", ...values }, "财务记录已保存"); if (ok) setAdding(false); }} />}</>;
+}
+
+function financeLabel(category: FinancialRecord["category"]) { return { cash: "现金", property: "房产", income: "收入", fixed_expense: "固定支出" }[category]; }
 
 function ReviewPanel({ completedActions, actionTotal, exerciseCount, englishCount, reviews, busy, mutate }: { completedActions: number; actionTotal: number; exerciseCount: number; englishCount: number; reviews: Review[]; busy: boolean; mutate: (payload: Record<string, unknown>, success?: string) => Promise<boolean> }) {
   const [achievement, setAchievement] = useState("");
@@ -418,6 +473,34 @@ function ReviewPanel({ completedActions, actionTotal, exerciseCount, englishCoun
   </>;
 }
 
+const journeyAreas = ["健康", "英语", "职业", "收入", "财务与资产", "关系与家庭", "探索与生活"];
+
+function JourneyCreateDialog({ busy, onClose, onSave }: { busy: boolean; onClose: () => void; onSave: (values: { title: string; area: string; acceptanceCriteria: string; nextAction: string }) => void }) {
+  const [title,setTitle]=useState(""),[area,setArea]=useState("职业"),[acceptanceCriteria,setAcceptance]=useState(""),[nextAction,setNext]=useState("");
+  // eslint-disable-next-line jsx-a11y/no-static-element-interactions
+  return <div className="dialog-backdrop" onMouseDown={(event)=>{if(event.target===event.currentTarget)onClose();}}><form className="dialog journey-dialog" onSubmit={(event)=>{event.preventDefault();onSave({title,area,acceptanceCriteria,nextAction});}}><button type="button" className="dialog-close" onClick={onClose}>×</button><span className="eyebrow">100次征程</span><h2>添加一次新征程</h2><p>先写清完成标准，路线可以在行动中调整。</p><div className="field-grid"><label><span>征程名称</span><input required maxLength={80} value={title} onChange={(event)=>setTitle(event.target.value)} placeholder="例如：完成第一篇公开文章" /></label><label><span>人生领域</span><select value={area} onChange={(event)=>setArea(event.target.value)}>{journeyAreas.map((item)=><option key={item}>{item}</option>)}</select></label></div><label><span>验收标准</span><textarea required value={acceptanceCriteria} onChange={(event)=>setAcceptance(event.target.value)} placeholder="怎样才算真正完成？" /></label><label><span>下一步行动</span><input required value={nextAction} onChange={(event)=>setNext(event.target.value)} placeholder="下一步最小行动" /></label><button className="primary-button full" disabled={busy}>{busy?"添加中…":"添加征程"}</button></form></div>;
+}
+
+function WeeklySettingsDialog({ profile, busy, onClose, onSave }: { profile: Profile; busy: boolean; onClose: () => void; onSave: (capacity: number, goal: string, generate: boolean) => void }) {
+  const [capacity,setCapacity]=useState(profile.weekly_capacity_minutes),[goal,setGoal]=useState(profile.weekly_goal);
+  // eslint-disable-next-line jsx-a11y/no-static-element-interactions
+  return <div className="dialog-backdrop" onMouseDown={(event)=>{if(event.target===event.currentTarget)onClose();}}><form className="dialog settings-dialog" onSubmit={(event)=>{event.preventDefault();onSave(capacity,goal,true);}}><button type="button" className="dialog-close" onClick={onClose}>×</button><span className="ai-mark">✦</span><span className="eyebrow">动态周计划</span><h2>本周时间与目标</h2><p>AI 只安排约 85% 的时间，给生活留出余量。</p><label><span>每周可用时间：{Math.round(capacity/6)/10} 小时</span><input className="range-input" type="range" min="60" max="1200" step="30" value={capacity} onChange={(event)=>setCapacity(Number(event.target.value))} /></label><label><span>本周目标</span><textarea required value={goal} onChange={(event)=>setGoal(event.target.value)} placeholder="例如：完成英文自我介绍，并能自然讲满3分钟" /></label><div className="dialog-actions"><button type="button" className="soft-button" disabled={busy} onClick={()=>onSave(capacity,goal,false)}>仅保存</button><button className="primary-button" disabled={busy}>{busy?"正在生成…":"保存并生成计划"}</button></div></form></div>;
+}
+
+function TaskCompleteDialog({ action, busy, onClose, onSubmit }: { action: Action; busy: boolean; onClose: () => void; onSubmit: (values: Record<string, unknown>) => void }) {
+  const [content,setContent]=useState(""),[duration,setDuration]=useState(30),[feeling,setFeeling]=useState(""),[category,setCategory]=useState<FinancialRecord["category"]>("cash"),[amount,setAmount]=useState(""),[recordedAt,setDate]=useState(new Date().toISOString().slice(0,10));
+  const prompts={reading:["读书笔记","写下核心观点、触动和下一步实践…"],english:["英语学习笔记","记录新表达、错误与改进…"],finance:["财务备注","说明这笔数据的口径…"],exercise:["运动记录",""],general:["完成成果（可选）","留下一句话，说明完成了什么…"]} as const;
+  const [label,placeholder]=prompts[action.task_type];
+  // eslint-disable-next-line jsx-a11y/no-static-element-interactions
+  return <div className="dialog-backdrop" onMouseDown={(event)=>{if(event.target===event.currentTarget)onClose();}}><form className="dialog complete-dialog" onSubmit={(event)=>{event.preventDefault();onSubmit({content,duration,feeling,category,amount,recordedAt});}}><button type="button" className="dialog-close" onClick={onClose}>×</button><span className={`task-type ${action.task_type}`}>{taskTypeLabel(action.task_type)}任务</span><h2>提交完成成果</h2><p>{action.title}</p>{action.task_type==="exercise"?<><label><span>运动时间（分钟）</span><input type="number" min="1" max="600" required value={duration} onChange={(event)=>setDuration(Number(event.target.value))} /></label><label><span>运动感受</span><textarea required value={feeling} onChange={(event)=>setFeeling(event.target.value)} placeholder="身体状态、强度和恢复感受…" /></label></>:<label><span>{label}</span><textarea required={action.task_type==="reading"||action.task_type==="english"} value={content} onChange={(event)=>setContent(event.target.value)} placeholder={placeholder} /></label>}{action.task_type==="finance"&&<><div className="field-grid"><label><span>数据类型</span><select value={category} onChange={(event)=>setCategory(event.target.value as FinancialRecord["category"])}><option value="cash">现金</option><option value="property">房产</option><option value="income">收入</option><option value="fixed_expense">固定支出</option></select></label><label><span>金额（元）</span><input type="number" min="0" step="0.01" required value={amount} onChange={(event)=>setAmount(event.target.value)} /></label></div><label><span>记录日期</span><input type="date" value={recordedAt} onChange={(event)=>setDate(event.target.value)} /></label></>}<button className="primary-button full" disabled={busy}>{busy?"提交中…":"确认完成并保存成果"}</button></form></div>;
+}
+
+function FinanceDialog({ actions, busy, onClose, onSave }: { actions: Action[]; busy: boolean; onClose: () => void; onSave: (values: Record<string,unknown>) => void }) {
+  const [category,setCategory]=useState<FinancialRecord["category"]>("cash"),[amount,setAmount]=useState(""),[note,setNote]=useState(""),[recordedAt,setDate]=useState(new Date().toISOString().slice(0,10)),[actionId,setActionId]=useState("");
+  // eslint-disable-next-line jsx-a11y/no-static-element-interactions
+  return <div className="dialog-backdrop" onMouseDown={(event)=>{if(event.target===event.currentTarget)onClose();}}><form className="dialog" onSubmit={(event)=>{event.preventDefault();onSave({category,amount,recordedAt,note,actionId});}}><button type="button" className="dialog-close" onClick={onClose}>×</button><span className="eyebrow">财务记录</span><h2>添加一条数据</h2><p>现金与房产按最新快照展示，收入与固定支出按月累计。</p><div className="field-grid"><label><span>类型</span><select value={category} onChange={(event)=>setCategory(event.target.value as FinancialRecord["category"])}><option value="cash">现金</option><option value="property">房产</option><option value="income">收入</option><option value="fixed_expense">固定支出</option></select></label><label><span>金额（元）</span><input required type="number" min="0" step="0.01" value={amount} onChange={(event)=>setAmount(event.target.value)} /></label></div><label><span>关联任务（可选）</span><select value={actionId} onChange={(event)=>setActionId(event.target.value)}><option value="">不关联任务</option>{actions.map((item)=><option key={item.id} value={item.id}>{item.title}</option>)}</select></label><label><span>日期</span><input type="date" value={recordedAt} onChange={(event)=>setDate(event.target.value)} /></label><label><span>备注</span><textarea value={note} onChange={(event)=>setNote(event.target.value)} /></label><button className="primary-button full" disabled={busy}>{busy?"保存中…":"保存财务记录"}</button></form></div>;
+}
+
 function JourneyDialog({ journey, busy, onClose, onSave, onDelete }: {
   journey: Journey;
   busy: boolean;
@@ -430,7 +513,7 @@ function JourneyDialog({ journey, busy, onClose, onSave, onDelete }: {
   const [acceptanceCriteria, setAcceptanceCriteria] = useState(journey.acceptance_criteria);
   const [nextAction, setNextAction] = useState(journey.next_action);
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const areas = ["健康", "英语", "职业", "收入", "财务与资产", "关系与家庭", "探索与生活"];
+  const areas = journeyAreas;
 
   return <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><form className="dialog journey-dialog" onSubmit={(event) => { event.preventDefault(); onSave({ title, area, acceptanceCriteria, nextAction }); }}><button type="button" className="dialog-close" onClick={onClose} aria-label="关闭">×</button><span className="eyebrow">征程 {String(journey.sequence_number).padStart(2, "0")}</span><h2>编辑征程</h2><p>路线可以调整，验收标准要始终清楚。</p><div className="field-grid"><label><span>征程名称</span><input required maxLength={80} value={title} onChange={(event) => setTitle(event.target.value)} /></label><label><span>人生领域</span><select value={area} onChange={(event) => setArea(event.target.value)}>{areas.map((item) => <option key={item}>{item}</option>)}</select></label></div><label><span>验收标准</span><textarea required maxLength={300} value={acceptanceCriteria} onChange={(event) => setAcceptanceCriteria(event.target.value)} /></label><label><span>下一步行动</span><input required maxLength={160} value={nextAction} onChange={(event) => setNextAction(event.target.value)} /></label><div className="dialog-actions"><button type="button" className={confirmDelete ? "danger-button confirm" : "danger-button"} disabled={busy} onClick={() => { if (confirmDelete) onDelete(); else setConfirmDelete(true); }}>{confirmDelete ? "再次点击确认删除" : "删除征程"}</button><button className="primary-button" disabled={busy}>{busy ? "正在保存…" : "保存修改"}</button></div></form></div>;
 }

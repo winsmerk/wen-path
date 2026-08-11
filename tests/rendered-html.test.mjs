@@ -18,9 +18,9 @@ test("renders the LifeOS application shell", async () => {
   const response = await render();
   assert.equal(response.status, 200);
   const html = await response.text();
-  assert.match(html, />wen</);
+  assert.match(html, /wen path/);
   assert.doesNotMatch(html, /40岁征程工作台/);
-  assert.match(html, /把40岁愿景连接到本月、本周和今天/);
+  assert.match(html, /把愿景连接到征程、本周与今天/);
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton/);
 });
 
@@ -32,10 +32,12 @@ test("ships product metadata and database declaration", async () => {
     readFile(new URL("app/LifeOS.tsx", templateRoot), "utf8"),
     readFile(new URL(".openai/hosting.json", templateRoot), "utf8"),
   ]);
-  assert.match(layout, /const title = "wen"/);
+  assert.match(layout, /const title = "wen path · Build a life you love\."/);
   assert.match(page, /<LifeOS \/>/);
   assert.match(lifeOS, /苏轼/);
   assert.match(lifeOS, /帮我调整计划/);
   assert.match(lifeOS, /编辑征程/);
+  assert.match(lifeOS, /当前财务情况/);
+  assert.match(lifeOS, /English Coach/);
   assert.match(hosting, /"d1": "DB"/);
 });

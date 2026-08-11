@@ -28,11 +28,17 @@ export function getD1(): D1Database {
   return env.DB;
 }
 
+export function getOpenAIKey(): string | undefined {
+  return env.OPENAI_API_KEY;
+}
+
 export async function ensureSchema(db: D1Database) {
   await db.batch([
     db.prepare(`CREATE TABLE IF NOT EXISTS profiles (
       user_id TEXT PRIMARY KEY, display_name TEXT NOT NULL, vision TEXT NOT NULL,
       target_date TEXT NOT NULL, initialized INTEGER NOT NULL DEFAULT 0,
+      weekly_capacity_minutes INTEGER NOT NULL DEFAULT 420,
+      weekly_goal TEXT NOT NULL DEFAULT '',
       created_at TEXT NOT NULL, updated_at TEXT NOT NULL
     )`),
     db.prepare(`CREATE TABLE IF NOT EXISTS journeys (
@@ -50,7 +56,8 @@ export async function ensureSchema(db: D1Database) {
       id TEXT PRIMARY KEY, user_id TEXT NOT NULL, outcome_id TEXT NOT NULL,
       title TEXT NOT NULL, estimated_minutes INTEGER NOT NULL,
       scheduled_for TEXT NOT NULL, priority INTEGER NOT NULL,
-      status TEXT NOT NULL, completed_at TEXT
+      status TEXT NOT NULL, completed_at TEXT,
+      task_type TEXT NOT NULL DEFAULT 'general', source TEXT NOT NULL DEFAULT 'manual'
     )`),
     db.prepare(`CREATE TABLE IF NOT EXISTS checkins (
       id TEXT PRIMARY KEY, user_id TEXT NOT NULL, type TEXT NOT NULL,
@@ -61,14 +68,46 @@ export async function ensureSchema(db: D1Database) {
       achievement TEXT NOT NULL, low_value TEXT NOT NULL,
       next_priority TEXT NOT NULL, created_at TEXT NOT NULL
     )`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS task_outputs (
+      id TEXT PRIMARY KEY, user_id TEXT NOT NULL, action_id TEXT NOT NULL,
+      task_type TEXT NOT NULL, title TEXT NOT NULL, content TEXT NOT NULL,
+      duration INTEGER NOT NULL DEFAULT 0, feeling TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL
+    )`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS financial_records (
+      id TEXT PRIMARY KEY, user_id TEXT NOT NULL, action_id TEXT,
+      category TEXT NOT NULL, amount REAL NOT NULL, note TEXT NOT NULL,
+      recorded_at TEXT NOT NULL, created_at TEXT NOT NULL
+    )`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS english_messages (
+      id TEXT PRIMARY KEY, user_id TEXT NOT NULL, role TEXT NOT NULL,
+      text TEXT NOT NULL, feedback TEXT NOT NULL, created_at TEXT NOT NULL
+    )`),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_journeys_user_status ON journeys(user_id, status)"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_actions_user_status ON weekly_actions(user_id, status)"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_checkins_user_type ON checkins(user_id, type)"),
+    db.prepare("CREATE INDEX IF NOT EXISTS idx_outputs_user_action ON task_outputs(user_id, action_id)"),
+    db.prepare("CREATE INDEX IF NOT EXISTS idx_finance_user_date ON financial_records(user_id, recorded_at)"),
+    db.prepare("CREATE INDEX IF NOT EXISTS idx_english_user_date ON english_messages(user_id, created_at)"),
   ]);
 
   const journeyColumns = await db.prepare("PRAGMA table_info(journeys)").all<{ name: string }>();
   if (!journeyColumns.results.some((column) => column.name === "deleted_at")) {
     await db.prepare("ALTER TABLE journeys ADD COLUMN deleted_at TEXT").run();
+  }
+
+  const profileColumns = await db.prepare("PRAGMA table_info(profiles)").all<{ name: string }>();
+  if (!profileColumns.results.some((column) => column.name === "weekly_capacity_minutes")) {
+    await db.prepare("ALTER TABLE profiles ADD COLUMN weekly_capacity_minutes INTEGER NOT NULL DEFAULT 420").run();
+  }
+  if (!profileColumns.results.some((column) => column.name === "weekly_goal")) {
+    await db.prepare("ALTER TABLE profiles ADD COLUMN weekly_goal TEXT NOT NULL DEFAULT ''").run();
+  }
+  const actionColumns = await db.prepare("PRAGMA table_info(weekly_actions)").all<{ name: string }>();
+  if (!actionColumns.results.some((column) => column.name === "task_type")) {
+    await db.prepare("ALTER TABLE weekly_actions ADD COLUMN task_type TEXT NOT NULL DEFAULT 'general'").run();
+  }
+  if (!actionColumns.results.some((column) => column.name === "source")) {
+    await db.prepare("ALTER TABLE weekly_actions ADD COLUMN source TEXT NOT NULL DEFAULT 'manual'").run();
   }
 
   await db.prepare("PRAGMA optimize").run();
@@ -100,10 +139,10 @@ const outcomeSeeds = [
 ] as const;
 
 const actionSeeds = [
-  ["a1", "finance", "整理现金、房产、收入与固定支出", 45, "周三", 1],
-  ["a2", "english", "录制3分钟英文自我介绍", 35, "周四", 2],
-  ["a3", "career", "列出10个重要职业项目", 60, "周六", 3],
-  ["a4", "exercise", "完成3次运动", 135, "本周", 4],
+  ["a1", "finance", "整理现金、房产、收入与固定支出", 45, "周三", 1, "finance"],
+  ["a2", "english", "录制3分钟英文自我介绍", 35, "周四", 2, "english"],
+  ["a3", "career", "列出10个重要职业项目", 60, "周六", 3, "general"],
+  ["a4", "exercise", "完成3次运动", 135, "本周", 4, "exercise"],
 ] as const;
 
 export async function seedWorkspace(db: D1Database, identity: WorkspaceIdentity) {
@@ -142,13 +181,19 @@ export async function seedWorkspace(db: D1Database, identity: WorkspaceIdentity)
     ).bind(`${identity.userId}-${id}`, identity.userId, title, acceptance, progress, hours),
   );
 
-  const actionStatements = actionSeeds.map(([id, outcomeId, title, minutes, day, priority]) =>
+  const actionStatements = actionSeeds.map(([id, outcomeId, title, minutes, day, priority, taskType]) =>
     db.prepare(
       `INSERT OR IGNORE INTO weekly_actions
-        (id, user_id, outcome_id, title, estimated_minutes, scheduled_for, priority, status)
-        VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')`,
-    ).bind(`${identity.userId}-${id}`, identity.userId, `${identity.userId}-${outcomeId}`, title, minutes, day, priority),
+        (id, user_id, outcome_id, title, estimated_minutes, scheduled_for, priority, status, task_type, source)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, 'seed')`,
+    ).bind(`${identity.userId}-${id}`, identity.userId, `${identity.userId}-${outcomeId}`, title, minutes, day, priority, taskType),
   );
 
   await db.batch([...journeyStatements, ...outcomeStatements, ...actionStatements]);
+  await db.batch([
+    db.prepare("UPDATE weekly_actions SET task_type = 'finance', source = 'seed' WHERE id = ? AND task_type = 'general'").bind(`${identity.userId}-a1`),
+    db.prepare("UPDATE weekly_actions SET task_type = 'english', source = 'seed' WHERE id = ? AND task_type = 'general'").bind(`${identity.userId}-a2`),
+    db.prepare("UPDATE weekly_actions SET source = 'seed' WHERE id = ?").bind(`${identity.userId}-a3`),
+    db.prepare("UPDATE weekly_actions SET task_type = 'exercise', source = 'seed' WHERE id = ? AND task_type = 'general'").bind(`${identity.userId}-a4`),
+  ]);
 }

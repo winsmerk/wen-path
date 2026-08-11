@@ -17,14 +17,14 @@ export async function generateMetadata(): Promise<Metadata> {
   const requestHeaders = await headers();
   const host = requestHeaders.get("x-forwarded-host") ?? requestHeaders.get("host") ?? "localhost:3000";
   const protocol = requestHeaders.get("x-forwarded-proto") ?? (host.startsWith("localhost") ? "http" : "https");
-  const image = `${protocol}://${host}/og-v2.png`;
-  const title = "wen";
-  const description = "把40岁愿景连接到本月、本周和今天，按真实生活持续调整。";
+  const image = `${protocol}://${host}/og-v3.png`;
+  const title = "wen path · Build a life you love.";
+  const description = "把愿景连接到征程、本周与今天，用真实行动持续构建喜欢的生活。";
 
   return {
     title,
     description,
-    openGraph: { title, description, images: [{ url: image, width: 1672, height: 941 }] },
+    openGraph: { title, description, images: [{ url: image, width: 1536, height: 1024 }] },
     twitter: { card: "summary_large_image", title, description, images: [image] },
   };
 }
