@@ -523,7 +523,7 @@ function OpenStreetFootprintMap({ items, selectedId, onSelect, onEdit }: { items
       if (selectedBounds.isValid()) {
         window.requestAnimationFrame(() => {
           map?.invalidateSize();
-          map?.fitBounds(selectedBounds, { padding: [8, 8], maxZoom: 18, animate: false });
+          map?.setView(selectedBounds.getCenter(), 11, { animate: false });
           selectedLayer?.openPopup();
         });
       }
