@@ -32,6 +32,10 @@ export function getOpenAIKey(): string | undefined {
   return env.OPENAI_API_KEY;
 }
 
+export function getMediaBucket(): R2Bucket | null {
+  return env.MEDIA ?? null;
+}
+
 export async function ensureSchema(db: D1Database) {
   await db.batch([
     db.prepare(`CREATE TABLE IF NOT EXISTS profiles (
@@ -82,12 +86,23 @@ export async function ensureSchema(db: D1Database) {
       id TEXT PRIMARY KEY, user_id TEXT NOT NULL, role TEXT NOT NULL,
       text TEXT NOT NULL, feedback TEXT NOT NULL, created_at TEXT NOT NULL
     )`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS footprints (
+      id TEXT PRIMARY KEY, user_id TEXT NOT NULL, name TEXT NOT NULL,
+      status TEXT NOT NULL, content TEXT NOT NULL, visited_at TEXT,
+      created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+    )`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS footprint_images (
+      id TEXT PRIMARY KEY, footprint_id TEXT NOT NULL, user_id TEXT NOT NULL,
+      object_key TEXT NOT NULL, content_type TEXT NOT NULL, created_at TEXT NOT NULL
+    )`),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_journeys_user_status ON journeys(user_id, status)"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_actions_user_status ON weekly_actions(user_id, status)"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_checkins_user_type ON checkins(user_id, type)"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_outputs_user_action ON task_outputs(user_id, action_id)"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_finance_user_date ON financial_records(user_id, recorded_at)"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_english_user_date ON english_messages(user_id, created_at)"),
+    db.prepare("CREATE INDEX IF NOT EXISTS idx_footprints_user_status ON footprints(user_id, status)"),
+    db.prepare("CREATE INDEX IF NOT EXISTS idx_footprint_images_footprint ON footprint_images(footprint_id, user_id)"),
   ]);
 
   const journeyColumns = await db.prepare("PRAGMA table_info(journeys)").all<{ name: string }>();

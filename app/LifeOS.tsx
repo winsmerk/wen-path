@@ -46,6 +46,8 @@ type Action = {
 type TaskOutput = { id: string; action_id: string; task_type: Action["task_type"]; title: string; content: string; duration: number; feeling: string; created_at: string };
 type FinancialRecord = { id: string; action_id: string | null; category: "cash" | "fixed_asset" | "investment" | "property" | "income" | "fixed_expense" | "daily_expense" | "social_expense" | "exercise_expense" | "learning_expense"; amount: number; note: string; recorded_at: string };
 type EnglishMessage = { id: string; role: "user" | "assistant"; text: string; feedback: string; created_at: string };
+type Footprint = { id: string; name: string; status: "visited" | "wishlist"; content: string; visited_at: string | null; created_at: string; updated_at: string };
+type FootprintImage = { id: string; footprint_id: string };
 
 type Checkin = {
   id: string;
@@ -73,9 +75,11 @@ type Workspace = {
   taskOutputs: TaskOutput[];
   financialRecords: FinancialRecord[];
   englishMessages: EnglishMessage[];
+  footprints: Footprint[];
+  footprintImages: FootprintImage[];
 };
 
-type Tab = "today" | "journeys" | "plan" | "records" | "finance" | "review";
+type Tab = "today" | "journeys" | "plan" | "records" | "finance" | "footprints" | "review";
 
 const tabs: { key: Tab; label: string; mark: string }[] = [
   { key: "today", label: "今日", mark: "⌂" },
@@ -83,6 +87,7 @@ const tabs: { key: Tab; label: string; mark: string }[] = [
   { key: "plan", label: "计划", mark: "◫" },
   { key: "records", label: "记录", mark: "+" },
   { key: "finance", label: "财务", mark: "¥" },
+  { key: "footprints", label: "足迹", mark: "⌖" },
   { key: "review", label: "复盘", mark: "↗" },
 ];
 
@@ -219,6 +224,7 @@ export default function LifeOS() {
         {tab === "plan" && <Plan profile={workspace.profile} outcomes={workspace.outcomes} actions={workspace.actions} busy={saving} mutate={mutate} onComplete={setCompletingAction} />}
         {tab === "records" && <Records items={workspace.checkins} outputs={workspace.taskOutputs} messages={workspace.englishMessages} busy={saving} onCheckin={setCheckinType} mutate={mutate} />}
         {tab === "finance" && <Finance records={workspace.financialRecords} actions={workspace.actions} busy={saving} mutate={mutate} />}
+        {tab === "footprints" && <Footprints items={workspace.footprints} images={workspace.footprintImages} onReload={load} />}
         {tab === "review" && (
           <ReviewPanel
             completedActions={completedActions}
@@ -440,6 +446,52 @@ function EnglishCoach({ messages, busy, mutate }: { messages: EnglishMessage[]; 
   }
   async function submit(event: FormEvent) { event.preventDefault(); if (!message.trim()) return; const ok = await mutate({ action: "english-coach", message }, "Coach 已给出反馈"); if (ok) setMessage(""); }
   return <section className="english-coach"><div className="section-heading"><div><span className="eyebrow">English Coach</span><h3>对话、纠正与口语训练</h3></div>{latestReply && <button className="soft-button" onClick={() => speak(latestReply.text)}>▶ 播放回复</button>}</div><div className="chat-log">{messages.length ? messages.slice(-8).map((item) => <div key={item.id} className={`chat-bubble ${item.role}`}><b>{item.role === "user" ? "You" : "Coach"}</b><p>{item.text}</p>{item.feedback && <small>{item.feedback}</small>}</div>) : <div className="empty-list"><b>Start with one sentence.</b><p>Try: “This week, I want to…”</p></div>}</div><form className="coach-input" onSubmit={submit}><textarea value={message} onChange={(event) => setMessage(event.target.value)} placeholder="用英语输入，或点击麦克风开始口语…" /><div><button type="button" className="soft-button" onClick={listen}>{listening ? "正在聆听…" : "◉ 开始口语"}</button><button className="primary-button" disabled={busy || !message.trim()}>发送给 Coach</button></div></form></section>;
+}
+
+function Footprints({ items, images, onReload }: { items: Footprint[]; images: FootprintImage[]; onReload: () => Promise<void> }) {
+  const [filter, setFilter] = useState<"all" | "visited" | "wishlist">("all");
+  const [selectedId, setSelectedId] = useState("");
+  const [editing, setEditing] = useState<Footprint | "new" | null>(null);
+  const visible = filter === "all" ? items : items.filter((item) => item.status === filter);
+  const selected = items.find((item) => item.id === selectedId) ?? visible[0] ?? items[0];
+  const selectedImages = selected ? images.filter((image) => image.footprint_id === selected.id) : [];
+  const visitedCount = items.filter((item) => item.status === "visited").length;
+  const wishlistCount = items.filter((item) => item.status === "wishlist").length;
+  const mapQuery = encodeURIComponent(selected?.name || "世界");
+  return <>
+    <PageHeader kicker="把世界变成生活的证据" title="我的足迹"><button className="primary-button" onClick={() => setEditing("new")}>＋ 留下足迹</button></PageHeader>
+    <div className="footprint-summary"><div><b>{visitedCount}</b><span>已点亮</span></div><div><b>{wishlistCount}</b><span>想去的地方</span></div><p>去过的地方会点亮为实心坐标，想去的地方会保留为下一段旅程。</p></div>
+    <section className="footprint-layout">
+      <div className="map-panel">
+        <iframe title={selected ? `${selected.name} Google 地图` : "Google 地图"} src={`https://www.google.com/maps?q=${mapQuery}&output=embed`} loading="lazy" referrerPolicy="no-referrer-when-downgrade" />
+        <div className={selected?.status === "visited" ? "map-place lit" : "map-place"}><span>⌖</span><div><small>{selected?.status === "visited" ? "已点亮" : "未来想去"}</small><b>{selected?.name || "添加第一处足迹"}</b></div></div>
+      </div>
+      <aside className="footprint-side">
+        <div className="filter-row"><button className={filter === "all" ? "active" : ""} onClick={() => setFilter("all")}>全部</button><button className={filter === "visited" ? "active" : ""} onClick={() => setFilter("visited")}>已去过</button><button className={filter === "wishlist" ? "active" : ""} onClick={() => setFilter("wishlist")}>想去</button></div>
+        <div className="footprint-list">{visible.length ? visible.map((item) => { const cover = images.find((image) => image.footprint_id === item.id); return <button key={item.id} className={`${item.status} ${selected?.id === item.id ? "active" : ""}`} onClick={() => setSelectedId(item.id)}>{cover ? <img src={`/api/footprint-image/${cover.id}`} alt="" /> : <span className="footprint-placeholder">⌖</span>}<span><small>{item.status === "visited" ? "● 已点亮" : "○ 想去"}</small><b>{item.name}</b><em>{item.visited_at ? new Date(item.visited_at).toLocaleDateString("zh-CN") : "未来某一天"}</em></span></button>; }) : <div className="empty-list"><b>这里还是空白</b><p>留下一个去过或想去的地方。</p></div>}</div>
+      </aside>
+    </section>
+    {selected && <section className="footprint-story"><div className="section-heading"><div><span className="eyebrow">{selected.status === "visited" ? "这片地图已经点亮" : "未来目的地"}</span><h3>{selected.name}</h3></div><button className="soft-button" onClick={() => setEditing(selected)}>编辑足迹</button></div><p>{selected.content || "还没有写下这里的故事。"}</p>{selectedImages.length > 0 && <div className="footprint-gallery">{selectedImages.map((image) => <img key={image.id} src={`/api/footprint-image/${image.id}`} alt={`${selected.name}足迹照片`} loading="lazy" />)}</div>}</section>}
+    {editing && <FootprintDialog item={editing === "new" ? undefined : editing} onClose={() => setEditing(null)} onSaved={async () => { setEditing(null); await onReload(); }} />}
+  </>;
+}
+
+function FootprintDialog({ item, onClose, onSaved }: { item?: Footprint; onClose: () => void; onSaved: () => Promise<void> }) {
+  const [name, setName] = useState(item?.name ?? "");
+  const [status, setStatus] = useState<"visited" | "wishlist">(item?.status ?? "visited");
+  const [content, setContent] = useState(item?.content ?? "");
+  const [visitedAt, setVisitedAt] = useState(item?.visited_at ?? new Date().toISOString().slice(0, 10));
+  const [files, setFiles] = useState<File[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  async function submit(event: FormEvent) {
+    event.preventDefault(); setBusy(true);
+    const form = new FormData(); if (item) form.append("id", item.id); form.append("name", name); form.append("status", status); form.append("content", content); if (status === "visited") form.append("visitedAt", visitedAt); files.forEach((file) => form.append("images", file));
+    const response = await fetch("/api/footprints", { method: "POST", body: form }); setBusy(false); if (response.ok) await onSaved();
+  }
+  async function remove() { if (!item) return; setBusy(true); const response = await fetch(`/api/footprints?id=${encodeURIComponent(item.id)}`, { method: "DELETE" }); setBusy(false); if (response.ok) await onSaved(); }
+  // eslint-disable-next-line jsx-a11y/label-has-associated-control
+  return <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><form className="dialog footprint-dialog" onSubmit={submit}><button type="button" className="dialog-close" onClick={onClose}>×</button><span className="eyebrow">旅行足迹</span><h2>{item ? "编辑足迹" : "留下一个地方"}</h2><p>地点名称将用于 Google 地图定位。</p><label><span>地点</span><input required value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：京都，日本" /></label><label><span>状态</span><div className="duration-row"><button type="button" className={status === "visited" ? "active" : ""} onClick={() => setStatus("visited")}>已去过 · 点亮</button><button type="button" className={status === "wishlist" ? "active" : ""} onClick={() => setStatus("wishlist")}>未来想去</button></div></label>{status === "visited" && <label><span>到访日期</span><input type="date" required value={visitedAt} onChange={(event) => setVisitedAt(event.target.value)} /></label>}<label><span>足迹内容</span><textarea value={content} onChange={(event) => setContent(event.target.value)} placeholder="发生了什么？为什么记得这里？" /></label><label><span>上传图片（最多6张，每张不超过8MB）</span><input className="file-input" type="file" accept="image/*" multiple onChange={(event) => setFiles(Array.from(event.target.files ?? []).slice(0, 6))} />{files.length > 0 && <small className="file-note">已选择 {files.length} 张图片</small>}</label><div className="dialog-actions">{item ? <button type="button" className={confirmDelete ? "danger-button confirm" : "danger-button"} disabled={busy} onClick={() => confirmDelete ? remove() : setConfirmDelete(true)}>{confirmDelete ? "再次点击确认删除" : "删除足迹"}</button> : <span />}<button className="primary-button" disabled={busy}>{busy ? "正在保存…" : "保存足迹"}</button></div></form></div>;
 }
 
 function Finance({ records, actions, busy, mutate }: { records: FinancialRecord[]; actions: Action[]; busy: boolean; mutate: (payload: Record<string, unknown>, success?: string) => Promise<boolean> }) {

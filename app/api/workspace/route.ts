@@ -77,7 +77,7 @@ export async function GET() {
   const context = await prepare();
   if (!context) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   const { db, identity } = context;
-  const [profile, journeys, outcomes, actions, checkins, reviews, taskOutputs, financialRecords, englishMessages] = await Promise.all([
+  const [profile, journeys, outcomes, actions, checkins, reviews, taskOutputs, financialRecords, englishMessages, footprints, footprintImages] = await Promise.all([
     db.prepare("SELECT * FROM profiles WHERE user_id = ?").bind(identity.userId).first(),
     db.prepare("SELECT * FROM journeys WHERE user_id = ? AND deleted_at IS NULL ORDER BY sequence_number").bind(identity.userId).all(),
     db.prepare("SELECT * FROM monthly_outcomes WHERE user_id = ? ORDER BY rowid").bind(identity.userId).all(),
@@ -87,8 +87,10 @@ export async function GET() {
     db.prepare("SELECT * FROM task_outputs WHERE user_id = ? ORDER BY created_at DESC LIMIT 50").bind(identity.userId).all(),
     db.prepare("SELECT * FROM financial_records WHERE user_id = ? ORDER BY recorded_at DESC, created_at DESC LIMIT 200").bind(identity.userId).all(),
     db.prepare("SELECT * FROM english_messages WHERE user_id = ? ORDER BY created_at ASC LIMIT 60").bind(identity.userId).all(),
+    db.prepare("SELECT * FROM footprints WHERE user_id = ? ORDER BY updated_at DESC").bind(identity.userId).all(),
+    db.prepare("SELECT id, footprint_id FROM footprint_images WHERE user_id = ? ORDER BY created_at ASC").bind(identity.userId).all(),
   ]);
-  return NextResponse.json({ profile, journeys: journeys.results, outcomes: outcomes.results, actions: actions.results, checkins: checkins.results, reviews: reviews.results, taskOutputs: taskOutputs.results, financialRecords: financialRecords.results, englishMessages: englishMessages.results });
+  return NextResponse.json({ profile, journeys: journeys.results, outcomes: outcomes.results, actions: actions.results, checkins: checkins.results, reviews: reviews.results, taskOutputs: taskOutputs.results, financialRecords: financialRecords.results, englishMessages: englishMessages.results, footprints: footprints.results, footprintImages: footprintImages.results });
 }
 
 export async function POST(request: Request) {

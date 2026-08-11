@@ -39,5 +39,7 @@ test("ships product metadata and database declaration", async () => {
   assert.match(lifeOS, /编辑征程/);
   assert.match(lifeOS, /当前财务情况/);
   assert.match(lifeOS, /English Coach/);
+  assert.match(lifeOS, /我的足迹/);
   assert.match(hosting, /"d1": "DB"/);
+  assert.match(hosting, /"r2": "MEDIA"/);
 });
