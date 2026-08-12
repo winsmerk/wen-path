@@ -152,7 +152,11 @@ export const financialRecords = sqliteTable("financial_records", {
   id: text("id").primaryKey(), userId: text("user_id").notNull(), actionId: text("action_id"), category: text("category").notNull(),
   amount: integer("amount").notNull(), note: text("note").notNull(), recordedAt: text("recorded_at").notNull(), createdAt: text("created_at").notNull(),
   incomeType: text("income_type").notNull().default(""), sourceName: text("source_name").notNull().default(""), expenseScope: text("expense_scope").notNull().default("personal"),
+  investmentPrincipal: real("investment_principal").notNull().default(0), investmentReturn: real("investment_return").notNull().default(0),
 });
+export const financialMonthlyBills = sqliteTable("financial_monthly_bills", {
+  id:text("id").primaryKey(),userId:text("user_id").notNull(),period:text("period").notNull(),incomeTotal:real("income_total").notNull().default(0),salaryIncome:real("salary_income").notNull().default(0),nonSalaryIncome:real("non_salary_income").notNull().default(0),expenseTotal:real("expense_total").notNull().default(0),businessExpense:real("business_expense").notNull().default(0),investmentPrincipal:real("investment_principal").notNull().default(0),investmentReturn:real("investment_return").notNull().default(0),businessProfit:real("business_profit").notNull().default(0),netCashFlow:real("net_cash_flow").notNull().default(0),settledAt:text("settled_at").notNull(),
+},(table)=>[uniqueIndex("idx_finance_bills_user_period").on(table.userId,table.period)]);
 export const englishMessages = sqliteTable("english_messages", {
   id: text("id").primaryKey(), userId: text("user_id").notNull(), role: text("role").notNull(), text: text("text").notNull(),
   feedback: text("feedback").notNull(), createdAt: text("created_at").notNull(),

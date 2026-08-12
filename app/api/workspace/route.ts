@@ -268,13 +268,28 @@ async function activateNextEligibleJourney(db: D1Database, userId: string) {
   if (updates.length) await db.batch(updates);
 }
 
+async function settleFinancialMonths(db:D1Database,userId:string,currentPeriod:string,now:string) {
+  await db.prepare(`INSERT INTO financial_monthly_bills (id,user_id,period,income_total,salary_income,non_salary_income,expense_total,business_expense,investment_principal,investment_return,business_profit,net_cash_flow,settled_at)
+    SELECT ?||':'||substr(recorded_at,1,7),?,substr(recorded_at,1,7),
+      SUM(CASE WHEN category='income' THEN amount ELSE 0 END),SUM(CASE WHEN category='income' AND income_type='salary' THEN amount ELSE 0 END),SUM(CASE WHEN category='income' AND income_type='non_salary' THEN amount ELSE 0 END),
+      SUM(CASE WHEN category IN ('fixed_expense','daily_expense','social_expense','exercise_expense','learning_expense') THEN amount ELSE 0 END),SUM(CASE WHEN category IN ('fixed_expense','daily_expense','social_expense','exercise_expense','learning_expense') AND expense_scope='business' THEN amount ELSE 0 END),
+      SUM(CASE WHEN category='investment' THEN investment_principal ELSE 0 END),SUM(CASE WHEN category='investment' THEN investment_return ELSE 0 END),
+      SUM(CASE WHEN category='income' AND income_type='non_salary' THEN amount ELSE 0 END)-SUM(CASE WHEN category IN ('fixed_expense','daily_expense','social_expense','exercise_expense','learning_expense') AND expense_scope='business' THEN amount ELSE 0 END),
+      SUM(CASE WHEN category='income' THEN amount ELSE 0 END)+SUM(CASE WHEN category='investment' THEN investment_return ELSE 0 END)-SUM(CASE WHEN category IN ('fixed_expense','daily_expense','social_expense','exercise_expense','learning_expense') THEN amount ELSE 0 END),?
+    FROM financial_records WHERE user_id=? AND substr(recorded_at,1,7)<? GROUP BY substr(recorded_at,1,7)
+    ON CONFLICT(user_id,period) DO UPDATE SET income_total=excluded.income_total,salary_income=excluded.salary_income,non_salary_income=excluded.non_salary_income,expense_total=excluded.expense_total,business_expense=excluded.business_expense,investment_principal=excluded.investment_principal,investment_return=excluded.investment_return,business_profit=excluded.business_profit,net_cash_flow=excluded.net_cash_flow,settled_at=excluded.settled_at`).bind(userId,userId,now,userId,currentPeriod).run();
+  const previousDate=new Date(`${currentPeriod}-01T00:00:00Z`);previousDate.setUTCMonth(previousDate.getUTCMonth()-1);const previousPeriod=previousDate.toISOString().slice(0,7);
+  await db.prepare("INSERT OR IGNORE INTO financial_monthly_bills (id,user_id,period,income_total,salary_income,non_salary_income,expense_total,business_expense,investment_principal,investment_return,business_profit,net_cash_flow,settled_at) VALUES (?,?,?,0,0,0,0,0,0,0,0,0,?)").bind(`${userId}:${previousPeriod}`,userId,previousPeriod,now).run();
+}
+
 export async function GET() {
   const context = await prepare();
   if (!context) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   const { db, identity } = context;
   await refreshProgress(db, identity.userId);
   const {month:currentPeriod,weekStart}=executionPeriods();
-  const [profile, journeys, journeyTasks, outcomes, outcomeHistory, activeWeek, weeklyCycles, actions, historyActions, checkins, reviews, taskOutputs, financialRecords, englishMessages, footprints, footprintImages, stopRuleEvents] = await Promise.all([
+  await settleFinancialMonths(db,identity.userId,currentPeriod,new Date().toISOString());
+  const [profile, journeys, journeyTasks, outcomes, outcomeHistory, activeWeek, weeklyCycles, actions, historyActions, checkins, reviews, taskOutputs, financialRecords,financialMonthlyBills, englishMessages, footprints, footprintImages, stopRuleEvents] = await Promise.all([
     db.prepare("SELECT * FROM profiles WHERE user_id = ?").bind(identity.userId).first(),
     db.prepare("SELECT * FROM journeys WHERE user_id = ? AND deleted_at IS NULL ORDER BY sequence_number").bind(identity.userId).all(),
     db.prepare("SELECT * FROM journey_tasks WHERE user_id=? ORDER BY journey_id,priority,rowid").bind(identity.userId).all(),
@@ -287,13 +302,14 @@ export async function GET() {
     db.prepare("SELECT * FROM checkins WHERE user_id = ? ORDER BY created_at DESC LIMIT 30").bind(identity.userId).all(),
     db.prepare("SELECT * FROM reviews WHERE user_id = ? ORDER BY created_at DESC LIMIT 8").bind(identity.userId).all(),
     db.prepare("SELECT * FROM task_outputs WHERE user_id = ? ORDER BY created_at DESC LIMIT 50").bind(identity.userId).all(),
-    db.prepare("SELECT * FROM financial_records WHERE user_id = ? ORDER BY recorded_at DESC, created_at DESC LIMIT 200").bind(identity.userId).all(),
+    db.prepare("SELECT * FROM financial_records WHERE user_id = ? ORDER BY recorded_at DESC, created_at DESC LIMIT 1000").bind(identity.userId).all(),
+    db.prepare("SELECT * FROM financial_monthly_bills WHERE user_id=? ORDER BY period DESC LIMIT 36").bind(identity.userId).all(),
     db.prepare("SELECT * FROM english_messages WHERE user_id = ? ORDER BY created_at ASC LIMIT 60").bind(identity.userId).all(),
     db.prepare("SELECT * FROM footprints WHERE user_id = ? ORDER BY updated_at DESC").bind(identity.userId).all(),
     db.prepare("SELECT id, footprint_id FROM footprint_images WHERE user_id = ? ORDER BY created_at ASC").bind(identity.userId).all(),
     db.prepare("SELECT * FROM stop_rule_events WHERE user_id=? ORDER BY created_at DESC LIMIT 20").bind(identity.userId).all(),
   ]);
-  return NextResponse.json({ profile, journeys: journeys.results, journeyTasks:journeyTasks.results, outcomes: outcomes.results, outcomeHistory: outcomeHistory.results, activeWeek, weeklyCycles:weeklyCycles.results, actions: actions.results, historyActions:historyActions.results, checkins: checkins.results, reviews: reviews.results, taskOutputs: taskOutputs.results, financialRecords: financialRecords.results, englishMessages: englishMessages.results, footprints: footprints.results, footprintImages: footprintImages.results,stopRuleEvents:stopRuleEvents.results });
+  return NextResponse.json({ profile, journeys: journeys.results, journeyTasks:journeyTasks.results, outcomes: outcomes.results, outcomeHistory: outcomeHistory.results, activeWeek, weeklyCycles:weeklyCycles.results, actions: actions.results, historyActions:historyActions.results, checkins: checkins.results, reviews: reviews.results, taskOutputs: taskOutputs.results, financialRecords: financialRecords.results,financialMonthlyBills:financialMonthlyBills.results, englishMessages: englishMessages.results, footprints: footprints.results, footprintImages: footprintImages.results,stopRuleEvents:stopRuleEvents.results });
 }
 
 export async function POST(request: Request) {
@@ -325,12 +341,13 @@ export async function POST(request: Request) {
     if ((task.task_type === "reading" || task.task_type === "english") && !content) return NextResponse.json({ error: "output_required" }, { status: 400 });
     if (task.task_type === "exercise" && (!duration || !feeling)) return NextResponse.json({ error: "output_required" }, { status: 400 });
     if (task.task_type === "finance") {
-      const category = clean(body.category, 30), descriptionOnly = category === "fixed_asset" || category === "property", amount = descriptionOnly ? 0 : Number(body.amount);
+      const category = clean(body.category, 30), descriptionOnly = category === "fixed_asset" || category === "property", amount = descriptionOnly ? 0 : category==="investment"?Number(body.investmentPrincipal):Number(body.amount);
+      const investmentPrincipal=category==="investment"?Number(body.investmentPrincipal):0,investmentReturn=category==="investment"?Number(body.investmentReturn):0;
       const incomeType = category === "income" && ["salary","non_salary"].includes(clean(body.incomeType,20)) ? clean(body.incomeType,20) : "";
       const sourceName = category === "income" ? clean(body.sourceName,100) : "";
       const expenseScope = /expense$/.test(category) && clean(body.expenseScope,20) === "business" ? "business" : "personal";
-      if (!["cash", "reserve_fund", "fixed_asset", "investment", "property", "income", "fixed_expense", "daily_expense", "social_expense", "exercise_expense", "learning_expense"].includes(category) || !Number.isFinite(amount) || amount < 0 || (descriptionOnly && !content)) return NextResponse.json({ error: "finance_required" }, { status: 400 });
-      await db.prepare("INSERT INTO financial_records (id,user_id,action_id,category,amount,note,recorded_at,created_at,income_type,source_name,expense_scope) VALUES (?,?,?,?,?,?,?,?,?,?,?)").bind(crypto.randomUUID(), identity.userId, task.id, category, amount, content || task.title, clean(body.recordedAt, 10) || now.slice(0, 10), now,incomeType,sourceName,expenseScope).run();
+      if (!["cash", "reserve_fund", "fixed_asset", "investment", "property", "income", "fixed_expense", "daily_expense", "social_expense", "exercise_expense", "learning_expense"].includes(category) || !Number.isFinite(amount) || amount < 0 || !Number.isFinite(investmentPrincipal)||investmentPrincipal<0||!Number.isFinite(investmentReturn) || (descriptionOnly && !content)) return NextResponse.json({ error: "finance_required" }, { status: 400 });
+      await db.prepare("INSERT INTO financial_records (id,user_id,action_id,category,amount,note,recorded_at,created_at,income_type,source_name,expense_scope,investment_principal,investment_return) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)").bind(crypto.randomUUID(), identity.userId, task.id, category,category==="investment"?investmentPrincipal:amount, content || task.title, clean(body.recordedAt, 10) || now.slice(0, 10), now,incomeType,sourceName,expenseScope,investmentPrincipal,investmentReturn).run();
     }
     await db.prepare("INSERT INTO task_outputs (id,user_id,action_id,task_type,title,content,duration,feeling,created_at) VALUES (?,?,?,?,?,?,?,?,?)").bind(crypto.randomUUID(), identity.userId, task.id, task.task_type, task.title, content, duration, feeling, now).run();
     await db.prepare("UPDATE weekly_actions SET status = 'completed', completed_at = ? WHERE id = ? AND user_id = ?").bind(now, task.id, identity.userId).run();
@@ -489,15 +506,17 @@ export async function POST(request: Request) {
     else if (body.mode === "restore-paused") await db.prepare("UPDATE weekly_actions SET status='pending' WHERE user_id=? AND cycle_id=? AND status='paused'").bind(identity.userId,activeCycleId).run();
     else return NextResponse.json({error:"invalid_adjustment"},{status:400});
   } else if (body.action === "financial-record") {
-    const category = clean(body.category, 30), descriptionOnly = category === "fixed_asset" || category === "property", amount = descriptionOnly ? 0 : Number(body.amount), actionId = clean(body.actionId, 80) || null, note = clean(body.note, 400);
+    const category = clean(body.category, 30), descriptionOnly = category === "fixed_asset" || category === "property", amount = descriptionOnly ? 0 : category==="investment"?Number(body.investmentPrincipal):Number(body.amount), actionId = clean(body.actionId, 80) || null, note = clean(body.note, 400);
+    const investmentPrincipal=category==="investment"?Number(body.investmentPrincipal):0,investmentReturn=category==="investment"?Number(body.investmentReturn):0;
     const incomeType = category === "income" && ["salary","non_salary"].includes(clean(body.incomeType,20)) ? clean(body.incomeType,20) : "", sourceName = category === "income" ? clean(body.sourceName,100) : "", expenseScope = /expense$/.test(category) && clean(body.expenseScope,20) === "business" ? "business" : "personal";
-    if (!["cash","reserve_fund","fixed_asset","investment","property","income","fixed_expense","daily_expense","social_expense","exercise_expense","learning_expense"].includes(category) || !Number.isFinite(amount) || amount < 0 || (descriptionOnly && !note)) return NextResponse.json({error:"invalid_finance"},{status:400});
-    await db.prepare("INSERT INTO financial_records (id,user_id,action_id,category,amount,note,recorded_at,created_at,income_type,source_name,expense_scope) VALUES (?,?,?,?,?,?,?,?,?,?,?)").bind(crypto.randomUUID(),identity.userId,actionId,category,amount,note,clean(body.recordedAt,10)||now.slice(0,10),now,incomeType,sourceName,expenseScope).run();
+    if (!["cash","reserve_fund","fixed_asset","investment","property","income","fixed_expense","daily_expense","social_expense","exercise_expense","learning_expense"].includes(category) || !Number.isFinite(amount) || amount < 0 || !Number.isFinite(investmentPrincipal)||investmentPrincipal<0||!Number.isFinite(investmentReturn) || (descriptionOnly && !note)) return NextResponse.json({error:"invalid_finance"},{status:400});
+    await db.prepare("INSERT INTO financial_records (id,user_id,action_id,category,amount,note,recorded_at,created_at,income_type,source_name,expense_scope,investment_principal,investment_return) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)").bind(crypto.randomUUID(),identity.userId,actionId,category,category==="investment"?investmentPrincipal:amount,note,clean(body.recordedAt,10)||now.slice(0,10),now,incomeType,sourceName,expenseScope,investmentPrincipal,investmentReturn).run();
   } else if (body.action === "update-financial-record" && typeof body.id === "string") {
-    const category = clean(body.category, 30), descriptionOnly = category === "fixed_asset" || category === "property", amount = descriptionOnly ? 0 : Number(body.amount), actionId = clean(body.actionId, 80) || null, note = clean(body.note, 400);
+    const category = clean(body.category, 30), descriptionOnly = category === "fixed_asset" || category === "property", amount = descriptionOnly ? 0 : category==="investment"?Number(body.investmentPrincipal):Number(body.amount), actionId = clean(body.actionId, 80) || null, note = clean(body.note, 400);
+    const investmentPrincipal=category==="investment"?Number(body.investmentPrincipal):0,investmentReturn=category==="investment"?Number(body.investmentReturn):0;
     const incomeType = category === "income" && ["salary","non_salary"].includes(clean(body.incomeType,20)) ? clean(body.incomeType,20) : "", sourceName = category === "income" ? clean(body.sourceName,100) : "", expenseScope = /expense$/.test(category) && clean(body.expenseScope,20) === "business" ? "business" : "personal";
-    if (!["cash","reserve_fund","fixed_asset","investment","property","income","fixed_expense","daily_expense","social_expense","exercise_expense","learning_expense"].includes(category) || !Number.isFinite(amount) || amount < 0 || (descriptionOnly && !note)) return NextResponse.json({error:"invalid_finance"},{status:400});
-    await db.prepare("UPDATE financial_records SET action_id=?,category=?,amount=?,note=?,recorded_at=?,income_type=?,source_name=?,expense_scope=? WHERE id=? AND user_id=?").bind(actionId,category,amount,note,clean(body.recordedAt,10)||now.slice(0,10),incomeType,sourceName,expenseScope,body.id,identity.userId).run();
+    if (!["cash","reserve_fund","fixed_asset","investment","property","income","fixed_expense","daily_expense","social_expense","exercise_expense","learning_expense"].includes(category) || !Number.isFinite(amount) || amount < 0 || !Number.isFinite(investmentPrincipal)||investmentPrincipal<0||!Number.isFinite(investmentReturn) || (descriptionOnly && !note)) return NextResponse.json({error:"invalid_finance"},{status:400});
+    await db.prepare("UPDATE financial_records SET action_id=?,category=?,amount=?,note=?,recorded_at=?,income_type=?,source_name=?,expense_scope=?,investment_principal=?,investment_return=? WHERE id=? AND user_id=?").bind(actionId,category,category==="investment"?investmentPrincipal:amount,note,clean(body.recordedAt,10)||now.slice(0,10),incomeType,sourceName,expenseScope,investmentPrincipal,investmentReturn,body.id,identity.userId).run();
   } else if (body.action === "delete-financial-record" && typeof body.id === "string") {
     await db.prepare("DELETE FROM financial_records WHERE id=? AND user_id=?").bind(body.id,identity.userId).run();
   } else if (body.action === "english-coach") {

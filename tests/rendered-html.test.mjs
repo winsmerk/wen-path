@@ -60,6 +60,9 @@ test("ships product metadata, adaptive planning, and database declaration", asyn
   assert.match(lifeOS, /经营利润/);
   assert.match(lifeOS, /备用金/);
   assert.match(lifeOS, /点击查看明细/);
+  assert.match(lifeOS, /月底已结算/);
+  assert.match(lifeOS, /投资本金/);
+  assert.match(lifeOS, /本月收益（元，可为负）/);
   assert.match(lifeOS, /journey-\$\{item\.status\}/);
   assert.match(lifeOS, /副业时间上限/);
   assert.match(workspaceApi, /征程验收标准/);
@@ -87,6 +90,8 @@ test("ships product metadata, adaptive planning, and database declaration", asyn
   assert.match(workspaceApi, /evaluateStopRules/);
   assert.match(workspaceApi, /evidence_events/);
   assert.match(workspaceApi, /reserve_fund/);
+  assert.match(workspaceApi, /settleFinancialMonths/);
+  assert.match(workspaceApi, /financial_monthly_bills/);
   assert.match(lifeOS, /历史周计划/);
   assert.match(lifeOS, /月末结算/);
   assert.equal([...visionJourneys.matchAll(/^\s+\[\d+,/gm)].length, 100);

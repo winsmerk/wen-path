@@ -118,7 +118,16 @@ export async function ensureSchema(db: D1Database) {
       category TEXT NOT NULL, amount REAL NOT NULL, note TEXT NOT NULL,
       recorded_at TEXT NOT NULL, created_at TEXT NOT NULL,
       income_type TEXT NOT NULL DEFAULT '', source_name TEXT NOT NULL DEFAULT '',
-      expense_scope TEXT NOT NULL DEFAULT 'personal'
+      expense_scope TEXT NOT NULL DEFAULT 'personal', investment_principal REAL NOT NULL DEFAULT 0,
+      investment_return REAL NOT NULL DEFAULT 0
+    )`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS financial_monthly_bills (
+      id TEXT PRIMARY KEY, user_id TEXT NOT NULL, period TEXT NOT NULL,
+      income_total REAL NOT NULL DEFAULT 0, salary_income REAL NOT NULL DEFAULT 0,
+      non_salary_income REAL NOT NULL DEFAULT 0, expense_total REAL NOT NULL DEFAULT 0,
+      business_expense REAL NOT NULL DEFAULT 0, investment_principal REAL NOT NULL DEFAULT 0,
+      investment_return REAL NOT NULL DEFAULT 0, business_profit REAL NOT NULL DEFAULT 0,
+      net_cash_flow REAL NOT NULL DEFAULT 0, settled_at TEXT NOT NULL
     )`),
     db.prepare(`CREATE TABLE IF NOT EXISTS english_messages (
       id TEXT PRIMARY KEY, user_id TEXT NOT NULL, role TEXT NOT NULL,
@@ -149,6 +158,7 @@ export async function ensureSchema(db: D1Database) {
     db.prepare("CREATE INDEX IF NOT EXISTS idx_checkins_user_type ON checkins(user_id, type)"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_outputs_user_action ON task_outputs(user_id, action_id)"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_finance_user_date ON financial_records(user_id, recorded_at)"),
+    db.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_finance_bills_user_period ON financial_monthly_bills(user_id, period)"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_english_user_date ON english_messages(user_id, created_at)"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_footprints_user_status ON footprints(user_id, status)"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_footprint_images_footprint ON footprint_images(footprint_id, user_id)"),
@@ -211,6 +221,9 @@ export async function ensureSchema(db: D1Database) {
   if (!financeColumns.results.some((column) => column.name === "income_type")) await db.prepare("ALTER TABLE financial_records ADD COLUMN income_type TEXT NOT NULL DEFAULT ''").run();
   if (!financeColumns.results.some((column) => column.name === "source_name")) await db.prepare("ALTER TABLE financial_records ADD COLUMN source_name TEXT NOT NULL DEFAULT ''").run();
   if (!financeColumns.results.some((column) => column.name === "expense_scope")) await db.prepare("ALTER TABLE financial_records ADD COLUMN expense_scope TEXT NOT NULL DEFAULT 'personal'").run();
+  if (!financeColumns.results.some((column) => column.name === "investment_principal")) await db.prepare("ALTER TABLE financial_records ADD COLUMN investment_principal REAL NOT NULL DEFAULT 0").run();
+  if (!financeColumns.results.some((column) => column.name === "investment_return")) await db.prepare("ALTER TABLE financial_records ADD COLUMN investment_return REAL NOT NULL DEFAULT 0").run();
+  await db.prepare("UPDATE financial_records SET investment_principal=amount WHERE category='investment' AND investment_principal=0 AND amount>0").run();
   const footprintColumns = await db.prepare("PRAGMA table_info(footprints)").all<{ name: string }>();
   if (!footprintColumns.results.some((column) => column.name === "latitude")) {
     await db.prepare("ALTER TABLE footprints ADD COLUMN latitude REAL").run();
