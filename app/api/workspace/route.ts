@@ -3,7 +3,7 @@ import { ensureSchema, executionPeriods, getD1, getOpenAIKey, getWorkspaceIdenti
 
 export const dynamic = "force-dynamic";
 type PlanItem = { title: string; minutes: number; day: string; type: string; outcomeId?: string; sideHustle?: boolean; sourceTaskId: string };
-type JourneyTaskCandidate = { id:string;journey_id:string;journey_title:string;area:string;title:string;acceptance_criteria:string;estimated_minutes:number;task_type:string;execution_frequency:"daily"|"monthly";priority:number };
+type JourneyTaskCandidate = { id:string;journey_id:string;journey_title:string;area:string;title:string;acceptance_criteria:string;estimated_minutes:number;task_type:string;execution_frequency:"weekly"|"monthly";priority:number };
 
 async function prepare() {
   const identity = await getWorkspaceIdentity();
@@ -54,13 +54,13 @@ async function generateJourneyTasks(journey:{title:string;area:string;acceptance
 当前下一步：${journey.next_action}
 已有子任务：${existing.join("；")||"暂无"}
 要求：覆盖从准备到最终验收的完整路径；不重复已有任务；每项有清晰完成标准；粒度适合在一周内推进；不要生成与征程无关的通用习惯。
-其中重复练习、健康习惯、日常记录设为 daily；一次性交付、阶段成果设为 monthly。
-只返回JSON数组，字段 title、acceptanceCriteria、estimatedMinutes、taskType（reading、finance、exercise、english、general）、executionFrequency（daily或monthly）。`);
+需要每周持续推进或复盘的任务设为 weekly；只需当月完成一次的交付或阶段成果设为 monthly。
+只返回JSON数组，字段 title、acceptanceCriteria、estimatedMinutes、taskType（reading、finance、exercise、english、general）、executionFrequency（weekly或monthly）。`);
   if(!answer)return [];
   try {
     const parsed=JSON.parse(answer.replace(/^```json\s*|\s*```$/g,"")) as Array<{title?:string;acceptanceCriteria?:string;estimatedMinutes?:number;taskType?:string;executionFrequency?:string}>;
     const allowed=["reading","finance","exercise","english","general"];
-    return parsed.slice(0,8).map((item)=>({title:clean(item.title,120),acceptanceCriteria:clean(item.acceptanceCriteria,500),estimatedMinutes:Math.max(15,Math.min(1200,Number(item.estimatedMinutes)||60)),taskType:allowed.includes(clean(item.taskType,20))?clean(item.taskType,20):classify(clean(item.title,120)),executionFrequency:item.executionFrequency==="daily"?"daily":"monthly"})).filter((item)=>item.title&&item.acceptanceCriteria&&!existing.includes(item.title));
+    return parsed.slice(0,8).map((item)=>({title:clean(item.title,120),acceptanceCriteria:clean(item.acceptanceCriteria,500),estimatedMinutes:Math.max(15,Math.min(1200,Number(item.estimatedMinutes)||60)),taskType:allowed.includes(clean(item.taskType,20))?clean(item.taskType,20):classify(clean(item.title,120)),executionFrequency:item.executionFrequency==="weekly"?"weekly":"monthly"})).filter((item)=>item.title&&item.acceptanceCriteria&&!existing.includes(item.title));
   } catch{return [];}
 }
 
@@ -68,8 +68,8 @@ async function evaluateJourneyTasks(journey:{title:string;acceptance_criteria:st
   const answer=await askOpenAI(`评估一个征程的子任务设计是否合理。
 征程：${journey.title}
 最终验收：${journey.acceptance_criteria}
-子任务：${tasks.map((item,index)=>`${index+1}. ${item.title}｜完成标准：${item.acceptance_criteria}｜单次${item.estimated_minutes}分钟｜频率：${item.execution_frequency==="daily"?"每日":"每月"}｜${item.status}`).join("\n")||"暂无"}
-请检查：是否覆盖最终验收、顺序和依赖是否合理、每日/每月频率是否恰当、粒度是否适合月/周计划、是否重复或遗漏、是否存在无法验证的描述。
+子任务：${tasks.map((item,index)=>`${index+1}. ${item.title}｜完成标准：${item.acceptance_criteria}｜单次${item.estimated_minutes}分钟｜频率：${item.execution_frequency==="weekly"?"每周":"每月"}｜${item.status}`).join("\n")||"暂无"}
+请检查：是否覆盖最终验收、顺序和依赖是否合理、每周/每月频率是否恰当、粒度是否适合月/周计划、是否重复或遗漏、是否存在无法验证的描述。
 只返回JSON：score（0-100）、summary（简短结论）、strengths（字符串数组）、issues（字符串数组）、suggestions（字符串数组）。`);
   if(!answer)return {score:0,summary:"AI 暂时无法评估，请稍后重试。",strengths:[],issues:["未获得 AI 评估结果"],suggestions:[]};
   try {
@@ -85,23 +85,21 @@ async function selectWeekTasks(goal:string,capacity:number,candidates:JourneyTas
   const limit=capacity*.85;
   let used=0,sideUsed=0;
   const recurring:PlanItem[]=[];
-  for(const day of days){
-    for(const item of candidates.filter((candidate)=>candidate.execution_frequency==="daily")){
-      const minutes=Math.max(15,Number(item.estimated_minutes)||30);
-      if(used+minutes>limit)continue;
-      const wantsSide=/职业|收入/.test(item.area),side=wantsSide&&sideUsed+minutes<=sideHustleLimit;
-      used+=minutes;if(side)sideUsed+=minutes;
-      recurring.push({title:item.title,minutes,day,type:["reading","finance","exercise","english","general"].includes(item.task_type)?item.task_type:"general",outcomeId:"",sideHustle:side,sourceTaskId:item.id});
-    }
+  for(const [index,item] of candidates.filter((candidate)=>candidate.execution_frequency==="weekly").entries()){
+    const minutes=Math.max(15,Number(item.estimated_minutes)||30);
+    if(used+minutes>limit)continue;
+    const wantsSide=/职业|收入/.test(item.area),side=wantsSide&&sideUsed+minutes<=sideHustleLimit;
+    used+=minutes;if(side)sideUsed+=minutes;
+    recurring.push({title:item.title,minutes,day:days[index%days.length]||"本周",type:["reading","finance","exercise","english","general"].includes(item.task_type)?item.task_type:"general",outcomeId:"",sideHustle:side,sourceTaskId:item.id});
   }
-  const monthlyCandidates=candidates.filter((item)=>item.execution_frequency!=="daily");
+  const monthlyCandidates=candidates.filter((item)=>item.execution_frequency!=="weekly");
   if(!monthlyCandidates.length||used>=limit)return recurring;
   const answer=await askOpenAI(`从现有征程子任务中选择本周任务。绝对不要新建、改写或拼接任务。
 本周目标：${goal}
 可用时间：${capacity}分钟（最多使用85%）
 副业上限：${sideHustleLimit}分钟；休息日：${protectedDay}
 最近复盘：${reviewContext||"暂无"}
-每日任务已先占用${used}分钟。剩余候选月度任务：${monthlyCandidates.map((item)=>`${item.id}｜${item.area}｜${item.journey_title} → ${item.title}｜${item.estimated_minutes}分钟｜类型${item.task_type}｜优先级${item.priority}`).join("；")}
+周任务已按每周一次先占用${used}分钟。剩余候选月任务：${monthlyCandidates.map((item)=>`${item.id}｜${item.area}｜${item.journey_title} → ${item.title}｜${item.estimated_minutes}分钟｜类型${item.task_type}｜优先级${item.priority}`).join("；")}
 从月度任务中选择0-5项最能推进目标且能放入剩余容量的任务。只返回JSON数组，每项字段 sourceTaskId、day、sideHustle；sourceTaskId必须来自候选列表。`);
   let selected:Array<{sourceTaskId?:string;day?:string;sideHustle?:boolean}>=[];
   if(answer)try{selected=JSON.parse(answer.replace(/^```json\s*|\s*```$/g,""));}catch{/* fallback */}
@@ -125,12 +123,14 @@ function classify(goal: string) {
   return "general";
 }
 
-function remainingPlanningDays(localDate:string,protectedDay:string) {
-  const labels=["周日","周一","周二","周三","周四","周五","周六"];
+function remainingPlanningWeeks(localDate:string) {
   const start=new Date(`${localDate}T00:00:00Z`),end=new Date(start);end.setUTCMonth(end.getUTCMonth()+1,0);
-  let total=0;
-  for(const cursor=new Date(start);cursor<=end;cursor.setUTCDate(cursor.getUTCDate()+1))if(labels[cursor.getUTCDay()]!==protectedDay)total++;
-  return Math.max(1,total);
+  const weeks=new Set<string>();
+  for(const cursor=new Date(start);cursor<=end;cursor.setUTCDate(cursor.getUTCDate()+1)){
+    const monday=new Date(cursor),offset=(cursor.getUTCDay()+6)%7;monday.setUTCDate(cursor.getUTCDate()-offset);
+    weeks.add(monday.toISOString().slice(0,10));
+  }
+  return Math.max(1,weeks.size);
 }
 
 async function reviewJourneyEvidence(title:string,criteria:string,evidence:string) {
@@ -217,7 +217,7 @@ async function refreshProgress(db: D1Database, userId: string) {
     let progress = Number(outcome.progress);
     if(outcome.source_task_id){
       const sourceTask=journeyTaskRows.results.find((item)=>item.id===outcome.source_task_id);
-      if(sourceTask?.execution_frequency==="daily"){
+      if(sourceTask?.execution_frequency==="weekly"){
         const target=Number(`${outcome.title}${outcome.acceptance_criteria}`.match(/(\d+)\s*次/)?.[1]??1);
         const completed=actionRows.results.filter((item)=>item.source_task_id===outcome.source_task_id&&item.status==="completed").length;
         progress=Math.min(100,Math.round(completed/Math.max(1,target)*100));
@@ -239,7 +239,7 @@ async function refreshProgress(db: D1Database, userId: string) {
     const linked = outcomeRows.results.filter((item) => item.journey_id === journey.id).map((item) => outcomeProgress.get(item.id) ?? 0);
     const taskProgress=linkedTasks.map((item)=>{
       if(item.status==="completed")return 100;
-      if(item.execution_frequency!=="daily")return 0;
+      if(item.execution_frequency!=="weekly")return 0;
       const recurringOutcome=outcomeRows.results.find((outcome)=>outcome.source_task_id===item.id);
       return recurringOutcome?outcomeProgress.get(recurringOutcome.id)??0:0;
     });
@@ -317,7 +317,7 @@ export async function POST(request: Request) {
     if (!row) return NextResponse.json({ error: "not_found" }, { status: 404 });
     const status = row.status === "completed" ? "pending" : "completed";
     await db.prepare("UPDATE weekly_actions SET status = ?, completed_at = ? WHERE id = ? AND user_id = ?").bind(status, status === "completed" ? now : null, body.id, identity.userId).run();
-    if(row.source_task_id){const task=await db.prepare("SELECT journey_id,execution_frequency FROM journey_tasks WHERE id=? AND user_id=?").bind(row.source_task_id,identity.userId).first<{journey_id:string;execution_frequency:string}>();if(task&&task.execution_frequency!=="daily"){await db.prepare("UPDATE journey_tasks SET status=?,completed_at=?,updated_at=? WHERE id=? AND user_id=?").bind(status==="completed"?"completed":"pending",status==="completed"?now:null,now,row.source_task_id,identity.userId).run();await syncJourneyFromTasks(db,identity.userId,task.journey_id,now);}}
+    if(row.source_task_id){const task=await db.prepare("SELECT journey_id,execution_frequency FROM journey_tasks WHERE id=? AND user_id=?").bind(row.source_task_id,identity.userId).first<{journey_id:string;execution_frequency:string}>();if(task&&task.execution_frequency!=="weekly"){await db.prepare("UPDATE journey_tasks SET status=?,completed_at=?,updated_at=? WHERE id=? AND user_id=?").bind(status==="completed"?"completed":"pending",status==="completed"?now:null,now,row.source_task_id,identity.userId).run();await syncJourneyFromTasks(db,identity.userId,task.journey_id,now);}}
   } else if (body.action === "complete-task" && typeof body.id === "string") {
     const task = await db.prepare("SELECT * FROM weekly_actions WHERE id = ? AND user_id = ?").bind(body.id, identity.userId).first<{ id: string; title: string; task_type: string;source_task_id:string }>();
     if (!task) return NextResponse.json({ error: "not_found" }, { status: 404 });
@@ -334,7 +334,7 @@ export async function POST(request: Request) {
     }
     await db.prepare("INSERT INTO task_outputs (id,user_id,action_id,task_type,title,content,duration,feeling,created_at) VALUES (?,?,?,?,?,?,?,?,?)").bind(crypto.randomUUID(), identity.userId, task.id, task.task_type, task.title, content, duration, feeling, now).run();
     await db.prepare("UPDATE weekly_actions SET status = 'completed', completed_at = ? WHERE id = ? AND user_id = ?").bind(now, task.id, identity.userId).run();
-    if(task.source_task_id){const source=await db.prepare("SELECT journey_id,execution_frequency FROM journey_tasks WHERE id=? AND user_id=?").bind(task.source_task_id,identity.userId).first<{journey_id:string;execution_frequency:string}>();if(source&&source.execution_frequency!=="daily"){await db.prepare("UPDATE journey_tasks SET status='completed',completed_at=?,updated_at=? WHERE id=? AND user_id=?").bind(now,now,task.source_task_id,identity.userId).run();await syncJourneyFromTasks(db,identity.userId,source.journey_id,now);}}
+    if(task.source_task_id){const source=await db.prepare("SELECT journey_id,execution_frequency FROM journey_tasks WHERE id=? AND user_id=?").bind(task.source_task_id,identity.userId).first<{journey_id:string;execution_frequency:string}>();if(source&&source.execution_frequency!=="weekly"){await db.prepare("UPDATE journey_tasks SET status='completed',completed_at=?,updated_at=? WHERE id=? AND user_id=?").bind(now,now,task.source_task_id,identity.userId).run();await syncJourneyFromTasks(db,identity.userId,source.journey_id,now);}}
   } else if (body.action === "weekly-settings") {
     const capacity = Math.max(60, Math.min(2400, Number(body.capacityMinutes) || 420)), goal = clean(body.goal, 500);
     const sideHustleLimit = Math.max(0,Math.min(720,Number(body.sideHustleLimitMinutes) || 360)), protectedDay = clean(body.protectedDay,10) || "周日";
@@ -343,7 +343,7 @@ export async function POST(request: Request) {
   } else if (body.action === "add-journey-task" || body.action === "update-journey-task") {
     const journeyId=clean(body.journeyId,100),title=clean(body.title,120),acceptance=clean(body.acceptanceCriteria,500),taskType=clean(body.taskType,20),executionFrequency=clean(body.executionFrequency,20);
     const minutes=Math.max(15,Math.min(1200,Number(body.estimatedMinutes)||60));
-    if(!journeyId||!title||!acceptance||!["reading","finance","exercise","english","general"].includes(taskType)||!["daily","monthly"].includes(executionFrequency))return NextResponse.json({error:"invalid_journey_task"},{status:400});
+    if(!journeyId||!title||!acceptance||!["reading","finance","exercise","english","general"].includes(taskType)||!["weekly","monthly"].includes(executionFrequency))return NextResponse.json({error:"invalid_journey_task"},{status:400});
     const journey=await db.prepare("SELECT id FROM journeys WHERE id=? AND user_id=? AND deleted_at IS NULL").bind(journeyId,identity.userId).first();if(!journey)return NextResponse.json({error:"not_found"},{status:404});
     if(body.action==="add-journey-task"){const priority=await db.prepare("SELECT COALESCE(MAX(priority),0) AS value FROM journey_tasks WHERE user_id=? AND journey_id=?").bind(identity.userId,journeyId).first<{value:number}>();await db.prepare("INSERT INTO journey_tasks (id,user_id,journey_id,title,acceptance_criteria,estimated_minutes,task_type,execution_frequency,priority,status,source,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?, 'pending','manual',?,?)").bind(crypto.randomUUID(),identity.userId,journeyId,title,acceptance,minutes,taskType,executionFrequency,Number(priority?.value??0)+1,now,now).run();}
     else if(typeof body.id==="string")await db.prepare("UPDATE journey_tasks SET title=?,acceptance_criteria=?,estimated_minutes=?,task_type=?,execution_frequency=?,updated_at=? WHERE id=? AND journey_id=? AND user_id=?").bind(title,acceptance,minutes,taskType,executionFrequency,now,body.id,journeyId,identity.userId).run();
@@ -362,18 +362,17 @@ export async function POST(request: Request) {
   } else if (body.action === "evaluate-journey-tasks" && typeof body.journeyId === "string") {
     const [journey,tasks]=await Promise.all([db.prepare("SELECT title,acceptance_criteria FROM journeys WHERE id=? AND user_id=? AND deleted_at IS NULL").bind(body.journeyId,identity.userId).first<{title:string;acceptance_criteria:string}>(),db.prepare("SELECT title,acceptance_criteria,estimated_minutes,execution_frequency,status FROM journey_tasks WHERE journey_id=? AND user_id=? ORDER BY priority,rowid").bind(body.journeyId,identity.userId).all<{title:string;acceptance_criteria:string;estimated_minutes:number;execution_frequency:string;status:string}>()]);if(!journey)return NextResponse.json({error:"not_found"},{status:404});return NextResponse.json({ok:true,evaluation:await evaluateJourneyTasks(journey,tasks.results)});
   } else if (body.action === "generate-month-outcomes") {
-    const [taskRows,currentRows,profile]=await Promise.all([
-      db.prepare("SELECT t.id,t.journey_id,j.title AS journey_title,j.area,t.title,t.acceptance_criteria,t.estimated_minutes,t.task_type,t.execution_frequency,t.priority FROM journey_tasks t JOIN journeys j ON j.id=t.journey_id WHERE t.user_id=? AND t.status='pending' AND j.status='active' AND j.deleted_at IS NULL AND t.id NOT IN (SELECT source_task_id FROM monthly_outcomes WHERE user_id=? AND status='active') ORDER BY CASE WHEN t.execution_frequency='daily' THEN 0 ELSE 1 END,j.sequence_number,t.priority LIMIT 30").bind(identity.userId,identity.userId).all<JourneyTaskCandidate>(),
+    const [taskRows,currentRows]=await Promise.all([
+      db.prepare("SELECT t.id,t.journey_id,j.title AS journey_title,j.area,t.title,t.acceptance_criteria,t.estimated_minutes,t.task_type,t.execution_frequency,t.priority FROM journey_tasks t JOIN journeys j ON j.id=t.journey_id WHERE t.user_id=? AND t.status='pending' AND j.status='active' AND j.deleted_at IS NULL AND t.id NOT IN (SELECT source_task_id FROM monthly_outcomes WHERE user_id=? AND status='active') ORDER BY CASE WHEN t.execution_frequency='weekly' THEN 0 ELSE 1 END,j.sequence_number,t.priority LIMIT 30").bind(identity.userId,identity.userId).all<JourneyTaskCandidate>(),
       db.prepare("SELECT title,status FROM monthly_outcomes WHERE user_id=? AND period=?").bind(identity.userId,periods.month).all<{title:string;status:string}>(),
-      db.prepare("SELECT protected_day FROM profiles WHERE user_id=?").bind(identity.userId).first<{protected_day:string}>(),
     ]);
     if(currentRows.results.some((item)=>item.status!=="active"))return NextResponse.json({error:"month_settled"},{status:409});
     const slots=Math.max(0,5-currentRows.results.length);
     if(!slots)return NextResponse.json({error:"month_outcomes_full"},{status:409});
     if(!taskRows.results.length)return NextResponse.json({error:"no_journey_tasks"},{status:409});
     const candidates=taskRows.results.slice(0,slots);
-    const activeDays=remainingPlanningDays(periods.localDate,profile?.protected_day||"周日");
-    await db.batch(candidates.map((item)=>{const daily=item.execution_frequency==="daily";return db.prepare("INSERT INTO monthly_outcomes (id,user_id,title,acceptance_criteria,progress,expected_hours,status,journey_id,kind,period,source_task_id) VALUES (?,?,?,?,0,?,'active',?,?,?,?,?)").bind(crypto.randomUUID(),identity.userId,daily?`每日｜${item.title}`:item.title,daily?`本月剩余时间完成 ${activeDays} 次；每次标准：${item.acceptance_criteria}`:item.acceptance_criteria,Math.max(1,Math.ceil(item.estimated_minutes*(daily?activeDays:1)/60)),item.journey_id,daily?"habit":"milestone",periods.month,item.id)}));
+    const activeWeeks=remainingPlanningWeeks(periods.localDate);
+    await db.batch(candidates.map((item)=>{const weekly=item.execution_frequency==="weekly";return db.prepare("INSERT INTO monthly_outcomes (id,user_id,title,acceptance_criteria,progress,expected_hours,status,journey_id,kind,period,source_task_id) VALUES (?,?,?,?,0,?,'active',?,?,?,?,?)").bind(crypto.randomUUID(),identity.userId,weekly?`每周｜${item.title}`:item.title,weekly?`本月剩余时间完成 ${activeWeeks} 次；每次标准：${item.acceptance_criteria}`:item.acceptance_criteria,Math.max(1,Math.ceil(item.estimated_minutes*(weekly?activeWeeks:1)/60)),item.journey_id,weekly?"habit":"milestone",periods.month,item.id)}));
   } else if (body.action === "settle-month") {
     if(Number(periods.localDate.slice(8,10))<25)return NextResponse.json({error:"month_not_ready"},{status:409});
     const rows=await db.prepare("SELECT * FROM monthly_outcomes WHERE user_id=? AND period=? AND status='active'").bind(identity.userId,periods.month).all<{id:string;title:string;acceptance_criteria:string;progress:number;expected_hours:number;journey_id:string;kind:string}>();
@@ -420,7 +419,7 @@ export async function POST(request: Request) {
   } else if (body.action === "generate-week-plan") {
     const [profile, taskRows, latestReview] = await Promise.all([
       db.prepare("SELECT vision, weekly_capacity_minutes, weekly_goal,side_hustle_limit_minutes,protected_day FROM profiles WHERE user_id = ?").bind(identity.userId).first<{ vision: string; weekly_capacity_minutes: number; weekly_goal: string;side_hustle_limit_minutes:number;protected_day:string }>(),
-      db.prepare("SELECT t.id,t.journey_id,j.title AS journey_title,j.area,t.title,t.acceptance_criteria,t.estimated_minutes,t.task_type,t.execution_frequency,t.priority FROM journey_tasks t JOIN journeys j ON j.id=t.journey_id WHERE t.user_id=? AND t.status='pending' AND j.status='active' AND j.deleted_at IS NULL AND (t.execution_frequency='daily' OR t.id NOT IN (SELECT source_task_id FROM weekly_actions WHERE user_id=? AND cycle_id=? AND status IN ('pending','completed'))) ORDER BY CASE WHEN t.execution_frequency='daily' THEN 0 ELSE 1 END,j.sequence_number,t.priority LIMIT 40").bind(identity.userId,identity.userId,activeCycleId).all<JourneyTaskCandidate>(),
+      db.prepare("SELECT t.id,t.journey_id,j.title AS journey_title,j.area,t.title,t.acceptance_criteria,t.estimated_minutes,t.task_type,t.execution_frequency,t.priority FROM journey_tasks t JOIN journeys j ON j.id=t.journey_id WHERE t.user_id=? AND t.status='pending' AND j.status='active' AND j.deleted_at IS NULL AND (t.execution_frequency='weekly' OR t.id NOT IN (SELECT source_task_id FROM weekly_actions WHERE user_id=? AND cycle_id=? AND status IN ('pending','completed'))) ORDER BY CASE WHEN t.execution_frequency='weekly' THEN 0 ELSE 1 END,j.sequence_number,t.priority LIMIT 40").bind(identity.userId,identity.userId,activeCycleId).all<JourneyTaskCandidate>(),
       db.prepare("SELECT health_check,energy_score,decision,auto_decision,kill_rule_count,next_priority FROM reviews WHERE user_id=? ORDER BY created_at DESC LIMIT 1").bind(identity.userId).first<{health_check:string;energy_score:number;decision:string;auto_decision:string;kill_rule_count:number;next_priority:string}>(),
     ]);
     const goal = clean(body.goal, 500) || profile?.weekly_goal || "推进最重要的人生目标";
@@ -433,8 +432,8 @@ export async function POST(request: Request) {
     const reviewContext = latestReview ? `能量${latestReview.energy_score}/10；健康：${latestReview.health_check || "未填写"}；用户决定：${latestReview.decision}；系统判断：${latestReview.auto_decision}；停止规则触发${latestReview.kill_rule_count}条；下周重点：${latestReview.next_priority}` : "";
     if(!taskRows.results.length)return NextResponse.json({error:"no_journey_tasks"},{status:409});
     const plan = await selectWeekTasks(goal, capacity, taskRows.results, protectedDay, sideHustleLimit, reviewContext);
-    const completedDaily=new Set((await db.prepare("SELECT source_task_id,scheduled_for FROM weekly_actions WHERE user_id=? AND cycle_id=? AND status='completed' AND source_task_id!=''").bind(identity.userId,activeCycleId).all<{source_task_id:string;scheduled_for:string}>()).results.map((item)=>`${item.source_task_id}:${item.scheduled_for}`));
-    const freshPlan=plan.filter((item)=>!completedDaily.has(`${item.sourceTaskId}:${item.day}`));
+    const completedRecurring=new Set((await db.prepare("SELECT source_task_id FROM weekly_actions WHERE user_id=? AND cycle_id=? AND status='completed' AND source_task_id!=''").bind(identity.userId,activeCycleId).all<{source_task_id:string}>()).results.map((item)=>item.source_task_id));
+    const freshPlan=plan.filter((item)=>!completedRecurring.has(item.sourceTaskId));
     if(!freshPlan.length)return NextResponse.json({error:"no_tasks_fit_capacity"},{status:409});
     await db.prepare("UPDATE weekly_actions SET status = 'paused' WHERE user_id = ? AND cycle_id=? AND status = 'pending'").bind(identity.userId,activeCycleId).run();
     const maxPriority = await db.prepare("SELECT COALESCE(MAX(priority),0) AS value FROM weekly_actions WHERE user_id = ? AND cycle_id=?").bind(identity.userId,activeCycleId).first<{ value: number }>();
@@ -456,12 +455,10 @@ export async function POST(request: Request) {
   } else if (body.action === "journey-status" && typeof body.id === "string" && typeof body.status === "string") {
     if (!["active", "paused", "planned", "completed"].includes(body.status)) return NextResponse.json({ error: "invalid_status" }, { status: 400 });
     if (body.status === "active") {
-      const [count,target,rows] = await Promise.all([
-        db.prepare("SELECT COUNT(*) AS total FROM journeys WHERE user_id = ? AND status = 'active' AND deleted_at IS NULL").bind(identity.userId).first<{ total: number }>(),
+      const [target,rows] = await Promise.all([
         db.prepare("SELECT sequence_number,stage FROM journeys WHERE id=? AND user_id=? AND deleted_at IS NULL").bind(body.id,identity.userId).first<{sequence_number:number;stage:string}>(),
         db.prepare("SELECT sequence_number,stage,status FROM journeys WHERE user_id=? AND deleted_at IS NULL").bind(identity.userId).all<{sequence_number:number;stage:string;status:string}>(),
       ]);
-      if ((count?.total ?? 0) >= 5) return NextResponse.json({ error: "active_limit" }, { status: 409 });
       if (!target) return NextResponse.json({ error: "not_found" }, { status: 404 });
       const locked = rows.results.some((item) => item.sequence_number < target.sequence_number && item.stage !== target.stage && item.status !== "completed");
       if (locked) return NextResponse.json({ error: "stage_locked" }, { status: 409 });

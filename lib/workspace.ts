@@ -169,6 +169,7 @@ export async function ensureSchema(db: D1Database) {
   if (!journeyColumns.results.some((column) => column.name === "evidence_score")) await db.prepare("ALTER TABLE journeys ADD COLUMN evidence_score INTEGER NOT NULL DEFAULT 0").run();
   const journeyTaskColumns = await db.prepare("PRAGMA table_info(journey_tasks)").all<{ name: string }>();
   if (!journeyTaskColumns.results.some((column) => column.name === "execution_frequency")) await db.prepare("ALTER TABLE journey_tasks ADD COLUMN execution_frequency TEXT NOT NULL DEFAULT 'monthly'").run();
+  await db.prepare("UPDATE journey_tasks SET execution_frequency='weekly' WHERE execution_frequency='daily'").run();
 
   const profileColumns = await db.prepare("PRAGMA table_info(profiles)").all<{ name: string }>();
   if (!profileColumns.results.some((column) => column.name === "weekly_capacity_minutes")) {

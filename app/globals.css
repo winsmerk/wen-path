@@ -149,7 +149,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 3px
 .journey-task-copy { display:grid;gap:3px;text-align:left;background:none;border:0;padding:0;color:inherit;cursor:pointer;flex:1; }
 .journey-task-title { display:flex;align-items:center;gap:8px;flex-wrap:wrap; }
 .frequency-chip { padding:2px 7px;border-radius:999px;font-size:9px;font-style:normal;font-weight:700;letter-spacing:.02em; }
-.frequency-chip.daily { color:#27624f;background:#dff2e9; }
+.frequency-chip.weekly { color:#27624f;background:#dff2e9; }
 .frequency-chip.monthly { color:#735b2c;background:#f5ead0; }
 .journey-task-copy small { color:#78746d;line-height:1.45; }
 .journey-task-empty { margin-top:12px;padding:12px;border:1px dashed #d8d3c8;border-radius:12px;color:#777168;font-size:13px; }
