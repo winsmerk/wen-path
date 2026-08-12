@@ -37,6 +37,26 @@ export const journeys = sqliteTable(
   (table) => [index("idx_journeys_user_status").on(table.userId, table.status)],
 );
 
+export const journeyTasks = sqliteTable(
+  "journey_tasks",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id").notNull(),
+    journeyId: text("journey_id").notNull(),
+    title: text("title").notNull(),
+    acceptanceCriteria: text("acceptance_criteria").notNull(),
+    estimatedMinutes: integer("estimated_minutes").notNull().default(60),
+    taskType: text("task_type").notNull().default("general"),
+    priority: integer("priority").notNull().default(1),
+    status: text("status").notNull().default("pending"),
+    source: text("source").notNull().default("manual"),
+    completedAt: text("completed_at"),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [index("idx_journey_tasks_journey_status").on(table.userId, table.journeyId, table.status)],
+);
+
 export const monthlyOutcomes = sqliteTable("monthly_outcomes", {
   id: text("id").primaryKey(),
   userId: text("user_id").notNull(),
@@ -50,6 +70,7 @@ export const monthlyOutcomes = sqliteTable("monthly_outcomes", {
   period: text("period").notNull().default(""),
   settledAt: text("settled_at"),
   rolledFromId: text("rolled_from_id").notNull().default(""),
+  sourceTaskId: text("source_task_id").notNull().default(""),
 });
 
 export const weeklyCycles = sqliteTable("weekly_cycles", {
@@ -75,6 +96,7 @@ export const weeklyActions = sqliteTable(
     isSideHustle: integer("is_side_hustle", { mode: "boolean" }).notNull().default(false),
     cycleId: text("cycle_id").notNull().default(""),
     carriedFromId: text("carried_from_id").notNull().default(""),
+    sourceTaskId: text("source_task_id").notNull().default(""),
   },
   (table) => [index("idx_actions_user_status").on(table.userId, table.status)],
 );

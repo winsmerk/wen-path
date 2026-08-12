@@ -2,9 +2,10 @@ import { NextResponse } from "next/server";
 import { ensureSchema, executionPeriods, getD1, getOpenAIKey, getWorkspaceIdentity, seedWorkspace } from "@/lib/workspace";
 
 export const dynamic = "force-dynamic";
-type PlanItem = { title: string; minutes: number; day: string; type: string; outcomeId?: string; sideHustle?: boolean };
+type PlanItem = { title: string; minutes: number; day: string; type: string; outcomeId?: string; sideHustle?: boolean; sourceTaskId: string };
 type PlanOutcome = { id: string; title: string; kind: string; journey_title: string };
 type MonthPlanItem = { title:string;acceptanceCriteria:string;expectedHours:number;kind:string;journeyId:string };
+type JourneyTaskCandidate = { id:string;journey_id:string;journey_title:string;area:string;title:string;acceptance_criteria:string;estimated_minutes:number;task_type:string;priority:number };
 
 async function prepare() {
   const identity = await getWorkspaceIdentity();
@@ -38,6 +39,71 @@ async function askOpenAI(prompt: string) {
   } catch { return ""; }
 }
 
+async function syncJourneyFromTasks(db:D1Database,userId:string,journeyId:string,now:string) {
+  const counts=await db.prepare("SELECT COUNT(*) AS total,SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END) AS completed FROM journey_tasks WHERE user_id=? AND journey_id=?").bind(userId,journeyId).first<{total:number;completed:number}>();
+  const total=Number(counts?.total??0),completed=Number(counts?.completed??0);
+  if(!total)return;
+  const progress=Math.round(completed/total*100);
+  await db.prepare("UPDATE journeys SET progress=?,status=CASE WHEN ?=100 THEN 'completed' WHEN status='completed' THEN 'active' ELSE status END,completed_at=CASE WHEN ?=100 THEN COALESCE(completed_at,?) ELSE NULL END WHERE id=? AND user_id=? AND deleted_at IS NULL").bind(progress,progress,progress,now,journeyId,userId).run();
+  if(progress===100)await activateNextEligibleJourney(db,userId);
+}
+
+async function generateJourneyTasks(journey:{title:string;area:string;acceptance_criteria:string;next_action:string},existing:string[]) {
+  const answer=await askOpenAI(`请把一个人生征程拆成5-8个有先后顺序、可独立完成的子任务。
+征程：${journey.title}
+领域：${journey.area}
+征程验收标准：${journey.acceptance_criteria}
+当前下一步：${journey.next_action}
+已有子任务：${existing.join("；")||"暂无"}
+要求：覆盖从准备到最终验收的完整路径；不重复已有任务；每项有清晰完成标准；粒度适合在一周内推进；不要生成与征程无关的通用习惯。
+只返回JSON数组，字段 title、acceptanceCriteria、estimatedMinutes、taskType（reading、finance、exercise、english、general）。`);
+  if(!answer)return [];
+  try {
+    const parsed=JSON.parse(answer.replace(/^```json\s*|\s*```$/g,"")) as Array<{title?:string;acceptanceCriteria?:string;estimatedMinutes?:number;taskType?:string}>;
+    const allowed=["reading","finance","exercise","english","general"];
+    return parsed.slice(0,8).map((item)=>({title:clean(item.title,120),acceptanceCriteria:clean(item.acceptanceCriteria,500),estimatedMinutes:Math.max(15,Math.min(1200,Number(item.estimatedMinutes)||60)),taskType:allowed.includes(clean(item.taskType,20))?clean(item.taskType,20):classify(clean(item.title,120))})).filter((item)=>item.title&&item.acceptanceCriteria&&!existing.includes(item.title));
+  } catch{return [];}
+}
+
+async function evaluateJourneyTasks(journey:{title:string;acceptance_criteria:string},tasks:Array<{title:string;acceptance_criteria:string;estimated_minutes:number;status:string}>) {
+  const answer=await askOpenAI(`评估一个征程的子任务设计是否合理。
+征程：${journey.title}
+最终验收：${journey.acceptance_criteria}
+子任务：${tasks.map((item,index)=>`${index+1}. ${item.title}｜完成标准：${item.acceptance_criteria}｜${item.estimated_minutes}分钟｜${item.status}`).join("\n")||"暂无"}
+请检查：是否覆盖最终验收、顺序和依赖是否合理、粒度是否适合月/周计划、是否重复或遗漏、是否存在无法验证的描述。
+只返回JSON：score（0-100）、summary（简短结论）、strengths（字符串数组）、issues（字符串数组）、suggestions（字符串数组）。`);
+  if(!answer)return {score:0,summary:"AI 暂时无法评估，请稍后重试。",strengths:[],issues:["未获得 AI 评估结果"],suggestions:[]};
+  try {
+    const parsed=JSON.parse(answer.replace(/^```json\s*|\s*```$/g,"")) as {score?:number;summary?:string;strengths?:unknown[];issues?:unknown[];suggestions?:unknown[]};
+    const list=(value:unknown[])=>value.slice(0,5).map((item)=>clean(item,300)).filter(Boolean);
+    return {score:Math.max(0,Math.min(100,Number(parsed.score)||0)),summary:clean(parsed.summary,600),strengths:list(parsed.strengths||[]),issues:list(parsed.issues||[]),suggestions:list(parsed.suggestions||[])};
+  } catch{return {score:0,summary:"AI 返回的评估格式无法读取，请稍后重试。",strengths:[],issues:["评估结果格式异常"],suggestions:[]};}
+}
+
+async function selectWeekTasks(goal:string,capacity:number,candidates:JourneyTaskCandidate[],protectedDay:string,sideHustleLimit:number,reviewContext:string):Promise<PlanItem[]> {
+  if(!candidates.length)return [];
+  const answer=await askOpenAI(`从现有征程子任务中选择本周任务。绝对不要新建、改写或拼接任务。
+本周目标：${goal}
+可用时间：${capacity}分钟（最多使用85%）
+副业上限：${sideHustleLimit}分钟；休息日：${protectedDay}
+最近复盘：${reviewContext||"暂无"}
+候选子任务：${candidates.map((item)=>`${item.id}｜${item.area}｜${item.journey_title} → ${item.title}｜${item.estimated_minutes}分钟｜类型${item.task_type}｜优先级${item.priority}`).join("；")}
+选择1-5项最能推进目标且容量合理的任务。只返回JSON数组，每项字段 sourceTaskId、day、sideHustle；sourceTaskId必须来自候选列表。`);
+  let selected:Array<{sourceTaskId?:string;day?:string;sideHustle?:boolean}>=[];
+  if(answer)try{selected=JSON.parse(answer.replace(/^```json\s*|\s*```$/g,""));}catch{/* fallback */}
+  const byId=new Map(candidates.map((item)=>[item.id,item]));
+  const days=["周一","周二","周三","周四","周五","周六","周日"].filter((day)=>day!==protectedDay);
+  if(!Array.isArray(selected)||!selected.length)selected=candidates.slice(0,Math.min(5,candidates.length)).map((item,index)=>({sourceTaskId:item.id,day:days[index%days.length],sideHustle:/职业|收入/.test(item.area)}));
+  let used=0,sideUsed=0;
+  return selected.flatMap((pick,index)=>{
+    const item=byId.get(clean(pick.sourceTaskId,100));if(!item)return [];
+    const minutes=Math.max(15,Number(item.estimated_minutes)||60),side=Boolean(pick.sideHustle)&&sideUsed+minutes<=sideHustleLimit;
+    if(used+minutes>capacity*.85)return [];
+    used+=minutes;if(side)sideUsed+=minutes;
+    return [{title:item.title,minutes,day:clean(pick.day,12)===protectedDay?"本周":clean(pick.day,12)||days[index%days.length]||"本周",type:["reading","finance","exercise","english","general"].includes(item.task_type)?item.task_type:"general",outcomeId:"",sideHustle:side,sourceTaskId:item.id}];
+  });
+}
+
 function classify(goal: string) {
   if (/英语|英文|口语|English/i.test(goal)) return "english";
   if (/财务|现金|固定资产|投资|房产|收入|支出|资产/.test(goal)) return "finance";
@@ -68,7 +134,7 @@ function fallbackPlan(vision: string, goal: string, capacity: number, outcomes: 
     const wantsSideHustle = /职业|收入|作品|商业|副业/.test(item.title);
     const sideHustle = wantsSideHustle && assignedSideHustleMinutes + minutes <= sideHustleLimit;
     if (sideHustle) assignedSideHustleMinutes += minutes;
-    return { ...item, minutes, day: days[index % days.length], outcomeId: outcomes.find((outcome) => classify(outcome.title) === item.type)?.id || outcomes[index % Math.max(1,outcomes.length)]?.id || "", sideHustle };
+    return { ...item, minutes, day: days[index % days.length], outcomeId: outcomes.find((outcome) => classify(outcome.title) === item.type)?.id || outcomes[index % Math.max(1,outcomes.length)]?.id || "", sideHustle,sourceTaskId:"" };
   });
 }
 
@@ -100,7 +166,7 @@ async function generatePlan(vision: string, goal: string, capacity: number, jour
       if (Array.isArray(parsed) && parsed.length >= 3) {
         const allowed = ["reading", "finance", "exercise", "english", "general"];
         const outcomeIds = new Set(outcomes.map((item) => item.id));
-        const safe = parsed.slice(0, 5).map((item) => ({ title: clean(item.title, 100), minutes: Math.max(15, Math.min(180, Number(item.minutes) || 30)), day: clean(item.day, 12) === protectedDay ? "本周" : clean(item.day, 12) || "本周", type: allowed.includes(item.type) ? item.type : "general", outcomeId: outcomeIds.has(clean(item.outcomeId,100)) ? clean(item.outcomeId,100) : "", sideHustle: Boolean(item.sideHustle) }));
+        const safe = parsed.slice(0, 5).map((item) => ({ title: clean(item.title, 100), minutes: Math.max(15, Math.min(180, Number(item.minutes) || 30)), day: clean(item.day, 12) === protectedDay ? "本周" : clean(item.day, 12) || "本周", type: allowed.includes(item.type) ? item.type : "general", outcomeId: outcomeIds.has(clean(item.outcomeId,100)) ? clean(item.outcomeId,100) : "", sideHustle: Boolean(item.sideHustle),sourceTaskId:"" }));
         const dimensions = new Set(safe.map((item) => item.type));
         const sideHustleMinutes = safe.filter((item)=>item.sideHustle).reduce((sum,item)=>sum+item.minutes,0);
         if (safe.every((item) => item.title) && dimensions.size >= 2 && safe.reduce((sum, item) => sum + item.minutes, 0) <= capacity * 0.85 && sideHustleMinutes <= sideHustleLimit) return safe;
@@ -192,12 +258,13 @@ async function refreshProgress(db: D1Database, userId: string) {
     db.prepare("INSERT OR IGNORE INTO evidence_events (id,user_id,source_type,source_id,evidence_type,action_id,occurred_at,created_at) SELECT 'checkin:'||id,user_id,'checkin',id,type,'',created_at,created_at FROM checkins WHERE user_id=?").bind(userId),
     db.prepare("INSERT OR IGNORE INTO evidence_events (id,user_id,source_type,source_id,evidence_type,action_id,occurred_at,created_at) SELECT 'task:'||action_id,user_id,'task_output',action_id,task_type,action_id,MIN(created_at),MIN(created_at) FROM task_outputs WHERE user_id=? GROUP BY user_id,action_id,task_type").bind(userId),
   ]);
-  const [outcomeRows, actionRows, checkinRows, outputRows, journeyRows] = await Promise.all([
-    db.prepare("SELECT id,journey_id,title,acceptance_criteria,progress,kind FROM monthly_outcomes WHERE user_id=? AND status='active' AND period=?").bind(userId,month).all<{id:string;journey_id:string;title:string;acceptance_criteria:string;progress:number;kind:string}>(),
+  const [outcomeRows, actionRows, checkinRows, outputRows, journeyRows,journeyTaskRows] = await Promise.all([
+    db.prepare("SELECT id,journey_id,title,acceptance_criteria,progress,kind,source_task_id FROM monthly_outcomes WHERE user_id=? AND status='active' AND period=?").bind(userId,month).all<{id:string;journey_id:string;title:string;acceptance_criteria:string;progress:number;kind:string;source_task_id:string}>(),
     db.prepare("SELECT a.id,a.outcome_id,a.status FROM weekly_actions a LEFT JOIN weekly_cycles c ON c.id=a.cycle_id WHERE a.user_id=? AND c.week_start>=? AND c.week_start<=?").bind(userId,monthStart,`${month}-31`).all<{id:string;outcome_id:string;status:string}>(),
     db.prepare("SELECT evidence_type AS type,COUNT(*) AS total FROM evidence_events WHERE user_id=? AND occurred_at>=? AND occurred_at<=? GROUP BY evidence_type").bind(userId,monthStart,monthEnd).all<{type:string;total:number}>(),
     db.prepare("SELECT evidence_type AS task_type,COUNT(DISTINCT action_id) AS total FROM evidence_events WHERE user_id=? AND source_type='task_output' AND occurred_at>=? AND occurred_at<=? GROUP BY evidence_type").bind(userId,monthStart,monthEnd).all<{task_type:string;total:number}>(),
     db.prepare("SELECT id,status,progress FROM journeys WHERE user_id=? AND deleted_at IS NULL").bind(userId).all<{id:string;status:string;progress:number}>(),
+    db.prepare("SELECT id,journey_id,status FROM journey_tasks WHERE user_id=?").bind(userId).all<{id:string;journey_id:string;status:string}>(),
   ]);
   const evidenceCounts = new Map<string,number>();
   for (const row of checkinRows.results) evidenceCounts.set(row.type, Number(row.total));
@@ -207,7 +274,8 @@ async function refreshProgress(db: D1Database, userId: string) {
   const updates: D1PreparedStatement[] = [];
   for (const outcome of outcomeRows.results) {
     let progress = Number(outcome.progress);
-    if (outcome.kind === "habit") {
+    if(outcome.source_task_id){progress=journeyTaskRows.results.find((item)=>item.id===outcome.source_task_id)?.status==="completed"?100:0;}
+    else if (outcome.kind === "habit") {
       const type = /运动|健康/.test(outcome.title) ? "exercise" : /英语|英文|口语/.test(outcome.title) ? "english" : /读书|阅读/.test(outcome.title) ? "reading" : "";
       const target = Number(`${outcome.title}${outcome.acceptance_criteria}`.match(/(\d+)\s*次/)?.[1] ?? 12);
       if (type) progress = Math.min(100, Math.round((evidenceCounts.get(type) ?? 0) / target * 100));
@@ -219,9 +287,10 @@ async function refreshProgress(db: D1Database, userId: string) {
     updates.push(db.prepare("UPDATE monthly_outcomes SET progress=? WHERE id=? AND user_id=?").bind(progress,outcome.id,userId));
   }
   for (const journey of journeyRows.results) {
+    const linkedTasks=journeyTaskRows.results.filter((item)=>item.journey_id===journey.id);
     const linked = outcomeRows.results.filter((item) => item.journey_id === journey.id).map((item) => outcomeProgress.get(item.id) ?? 0);
-    const calculated = linked.length ? Math.round(linked.reduce((sum,item)=>sum+item,0)/linked.length) : journey.progress;
-    const progress = journey.status === "completed" ? 100 : Math.max(Number(journey.progress),calculated);
+    const calculated = linkedTasks.length?Math.round(linkedTasks.filter((item)=>item.status==="completed").length/linkedTasks.length*100):linked.length ? Math.round(linked.reduce((sum,item)=>sum+item,0)/linked.length) : journey.progress;
+    const progress = journey.status === "completed" ? 100 : calculated;
     if (progress !== journey.progress) updates.push(db.prepare("UPDATE journeys SET progress=? WHERE id=? AND user_id=?").bind(progress,journey.id,userId));
   }
   const {weekStart}=executionPeriods();
@@ -251,9 +320,10 @@ export async function GET() {
   const { db, identity } = context;
   await refreshProgress(db, identity.userId);
   const {month:currentPeriod,weekStart}=executionPeriods();
-  const [profile, journeys, outcomes, outcomeHistory, activeWeek, weeklyCycles, actions, historyActions, checkins, reviews, taskOutputs, financialRecords, englishMessages, footprints, footprintImages, stopRuleEvents] = await Promise.all([
+  const [profile, journeys, journeyTasks, outcomes, outcomeHistory, activeWeek, weeklyCycles, actions, historyActions, checkins, reviews, taskOutputs, financialRecords, englishMessages, footprints, footprintImages, stopRuleEvents] = await Promise.all([
     db.prepare("SELECT * FROM profiles WHERE user_id = ?").bind(identity.userId).first(),
     db.prepare("SELECT * FROM journeys WHERE user_id = ? AND deleted_at IS NULL ORDER BY sequence_number").bind(identity.userId).all(),
+    db.prepare("SELECT * FROM journey_tasks WHERE user_id=? ORDER BY journey_id,priority,rowid").bind(identity.userId).all(),
     db.prepare("SELECT * FROM monthly_outcomes WHERE user_id = ? AND period=? ORDER BY rowid").bind(identity.userId,currentPeriod).all(),
     db.prepare("SELECT * FROM monthly_outcomes WHERE user_id = ? AND period<? ORDER BY period DESC,rowid DESC LIMIT 60").bind(identity.userId,currentPeriod).all(),
     db.prepare("SELECT * FROM weekly_cycles WHERE user_id=? AND week_start=? LIMIT 1").bind(identity.userId,weekStart).first(),
@@ -269,7 +339,7 @@ export async function GET() {
     db.prepare("SELECT id, footprint_id FROM footprint_images WHERE user_id = ? ORDER BY created_at ASC").bind(identity.userId).all(),
     db.prepare("SELECT * FROM stop_rule_events WHERE user_id=? ORDER BY created_at DESC LIMIT 20").bind(identity.userId).all(),
   ]);
-  return NextResponse.json({ profile, journeys: journeys.results, outcomes: outcomes.results, outcomeHistory: outcomeHistory.results, activeWeek, weeklyCycles:weeklyCycles.results, actions: actions.results, historyActions:historyActions.results, checkins: checkins.results, reviews: reviews.results, taskOutputs: taskOutputs.results, financialRecords: financialRecords.results, englishMessages: englishMessages.results, footprints: footprints.results, footprintImages: footprintImages.results,stopRuleEvents:stopRuleEvents.results });
+  return NextResponse.json({ profile, journeys: journeys.results, journeyTasks:journeyTasks.results, outcomes: outcomes.results, outcomeHistory: outcomeHistory.results, activeWeek, weeklyCycles:weeklyCycles.results, actions: actions.results, historyActions:historyActions.results, checkins: checkins.results, reviews: reviews.results, taskOutputs: taskOutputs.results, financialRecords: financialRecords.results, englishMessages: englishMessages.results, footprints: footprints.results, footprintImages: footprintImages.results,stopRuleEvents:stopRuleEvents.results });
 }
 
 export async function POST(request: Request) {
@@ -289,12 +359,13 @@ export async function POST(request: Request) {
     if (!vision || !/^\d{4}-\d{2}-\d{2}$/.test(targetDate) || !Number.isFinite(parsedTarget.getTime())) return NextResponse.json({ error: "invalid_vision" }, { status: 400 });
     await db.prepare("UPDATE profiles SET vision=?,target_date=?,updated_at=? WHERE user_id=?").bind(vision, targetDate, now, identity.userId).run();
   } else if (body.action === "toggle-action" && typeof body.id === "string") {
-    const row = await db.prepare("SELECT status FROM weekly_actions WHERE id = ? AND user_id = ?").bind(body.id, identity.userId).first<{ status: string }>();
+    const row = await db.prepare("SELECT status,source_task_id FROM weekly_actions WHERE id = ? AND user_id = ?").bind(body.id, identity.userId).first<{ status: string;source_task_id:string }>();
     if (!row) return NextResponse.json({ error: "not_found" }, { status: 404 });
     const status = row.status === "completed" ? "pending" : "completed";
     await db.prepare("UPDATE weekly_actions SET status = ?, completed_at = ? WHERE id = ? AND user_id = ?").bind(status, status === "completed" ? now : null, body.id, identity.userId).run();
+    if(row.source_task_id){const task=await db.prepare("SELECT journey_id FROM journey_tasks WHERE id=? AND user_id=?").bind(row.source_task_id,identity.userId).first<{journey_id:string}>();if(task){await db.prepare("UPDATE journey_tasks SET status=?,completed_at=?,updated_at=? WHERE id=? AND user_id=?").bind(status==="completed"?"completed":"pending",status==="completed"?now:null,now,row.source_task_id,identity.userId).run();await syncJourneyFromTasks(db,identity.userId,task.journey_id,now);}}
   } else if (body.action === "complete-task" && typeof body.id === "string") {
-    const task = await db.prepare("SELECT * FROM weekly_actions WHERE id = ? AND user_id = ?").bind(body.id, identity.userId).first<{ id: string; title: string; task_type: string }>();
+    const task = await db.prepare("SELECT * FROM weekly_actions WHERE id = ? AND user_id = ?").bind(body.id, identity.userId).first<{ id: string; title: string; task_type: string;source_task_id:string }>();
     if (!task) return NextResponse.json({ error: "not_found" }, { status: 404 });
     const content = clean(body.content, 3000), feeling = clean(body.feeling, 600), duration = Math.max(0, Math.min(600, Number(body.duration) || 0));
     if ((task.task_type === "reading" || task.task_type === "english") && !content) return NextResponse.json({ error: "output_required" }, { status: 400 });
@@ -309,24 +380,44 @@ export async function POST(request: Request) {
     }
     await db.prepare("INSERT INTO task_outputs (id,user_id,action_id,task_type,title,content,duration,feeling,created_at) VALUES (?,?,?,?,?,?,?,?,?)").bind(crypto.randomUUID(), identity.userId, task.id, task.task_type, task.title, content, duration, feeling, now).run();
     await db.prepare("UPDATE weekly_actions SET status = 'completed', completed_at = ? WHERE id = ? AND user_id = ?").bind(now, task.id, identity.userId).run();
+    if(task.source_task_id){const source=await db.prepare("SELECT journey_id FROM journey_tasks WHERE id=? AND user_id=?").bind(task.source_task_id,identity.userId).first<{journey_id:string}>();if(source){await db.prepare("UPDATE journey_tasks SET status='completed',completed_at=?,updated_at=? WHERE id=? AND user_id=?").bind(now,now,task.source_task_id,identity.userId).run();await syncJourneyFromTasks(db,identity.userId,source.journey_id,now);}}
   } else if (body.action === "weekly-settings") {
     const capacity = Math.max(60, Math.min(2400, Number(body.capacityMinutes) || 420)), goal = clean(body.goal, 500);
     const sideHustleLimit = Math.max(0,Math.min(720,Number(body.sideHustleLimitMinutes) || 360)), protectedDay = clean(body.protectedDay,10) || "周日";
     await db.prepare("UPDATE profiles SET weekly_capacity_minutes=?,weekly_goal=?,side_hustle_limit_minutes=?,protected_day=?,updated_at=? WHERE user_id=?").bind(capacity,goal,sideHustleLimit,protectedDay,now,identity.userId).run();
     await db.prepare("UPDATE weekly_cycles SET goal=?,capacity_minutes=? WHERE id=? AND user_id=?").bind(goal,capacity,activeCycleId,identity.userId).run();
+  } else if (body.action === "add-journey-task" || body.action === "update-journey-task") {
+    const journeyId=clean(body.journeyId,100),title=clean(body.title,120),acceptance=clean(body.acceptanceCriteria,500),taskType=clean(body.taskType,20);
+    const minutes=Math.max(15,Math.min(1200,Number(body.estimatedMinutes)||60));
+    if(!journeyId||!title||!acceptance||!["reading","finance","exercise","english","general"].includes(taskType))return NextResponse.json({error:"invalid_journey_task"},{status:400});
+    const journey=await db.prepare("SELECT id FROM journeys WHERE id=? AND user_id=? AND deleted_at IS NULL").bind(journeyId,identity.userId).first();if(!journey)return NextResponse.json({error:"not_found"},{status:404});
+    if(body.action==="add-journey-task"){const priority=await db.prepare("SELECT COALESCE(MAX(priority),0) AS value FROM journey_tasks WHERE user_id=? AND journey_id=?").bind(identity.userId,journeyId).first<{value:number}>();await db.prepare("INSERT INTO journey_tasks (id,user_id,journey_id,title,acceptance_criteria,estimated_minutes,task_type,priority,status,source,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?, 'pending','manual',?,?)").bind(crypto.randomUUID(),identity.userId,journeyId,title,acceptance,minutes,taskType,Number(priority?.value??0)+1,now,now).run();}
+    else if(typeof body.id==="string")await db.prepare("UPDATE journey_tasks SET title=?,acceptance_criteria=?,estimated_minutes=?,task_type=?,updated_at=? WHERE id=? AND journey_id=? AND user_id=?").bind(title,acceptance,minutes,taskType,now,body.id,journeyId,identity.userId).run();
+    else return NextResponse.json({error:"missing_id"},{status:400});
+    await syncJourneyFromTasks(db,identity.userId,journeyId,now);
+  } else if (body.action === "delete-journey-task" && typeof body.id === "string") {
+    const task=await db.prepare("SELECT journey_id FROM journey_tasks WHERE id=? AND user_id=?").bind(body.id,identity.userId).first<{journey_id:string}>();if(!task)return NextResponse.json({error:"not_found"},{status:404});
+    await db.batch([db.prepare("UPDATE weekly_actions SET source_task_id='' WHERE user_id=? AND source_task_id=?").bind(identity.userId,body.id),db.prepare("UPDATE monthly_outcomes SET source_task_id='' WHERE user_id=? AND source_task_id=?").bind(identity.userId,body.id),db.prepare("DELETE FROM journey_tasks WHERE id=? AND user_id=?").bind(body.id,identity.userId)]);await syncJourneyFromTasks(db,identity.userId,task.journey_id,now);
+  } else if (body.action === "toggle-journey-task" && typeof body.id === "string") {
+    const task=await db.prepare("SELECT journey_id,status FROM journey_tasks WHERE id=? AND user_id=?").bind(body.id,identity.userId).first<{journey_id:string;status:string}>();if(!task)return NextResponse.json({error:"not_found"},{status:404});const status=task.status==="completed"?"pending":"completed";
+    await db.batch([db.prepare("UPDATE journey_tasks SET status=?,completed_at=?,updated_at=? WHERE id=? AND user_id=?").bind(status,status==="completed"?now:null,now,body.id,identity.userId),db.prepare("UPDATE weekly_actions SET status=?,completed_at=? WHERE user_id=? AND source_task_id=? AND status!='paused'").bind(status==="completed"?"completed":"pending",status==="completed"?now:null,identity.userId,body.id),db.prepare("UPDATE monthly_outcomes SET progress=? WHERE user_id=? AND source_task_id=? AND status='active'").bind(status==="completed"?100:0,identity.userId,body.id)]);await syncJourneyFromTasks(db,identity.userId,task.journey_id,now);
+  } else if (body.action === "generate-journey-tasks" && typeof body.journeyId === "string") {
+    const [journey,existing]=await Promise.all([db.prepare("SELECT title,area,acceptance_criteria,next_action FROM journeys WHERE id=? AND user_id=? AND deleted_at IS NULL").bind(body.journeyId,identity.userId).first<{title:string;area:string;acceptance_criteria:string;next_action:string}>(),db.prepare("SELECT title FROM journey_tasks WHERE journey_id=? AND user_id=?").bind(body.journeyId,identity.userId).all<{title:string}>()]);if(!journey)return NextResponse.json({error:"not_found"},{status:404});
+    const generated=await generateJourneyTasks(journey,existing.results.map((item)=>item.title));if(!generated.length)return NextResponse.json({error:"generation_failed"},{status:503});
+    const start=existing.results.length;await db.batch(generated.map((item,index)=>db.prepare("INSERT INTO journey_tasks (id,user_id,journey_id,title,acceptance_criteria,estimated_minutes,task_type,priority,status,source,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?, 'pending','ai',?,?)").bind(crypto.randomUUID(),identity.userId,body.journeyId,item.title,item.acceptanceCriteria,item.estimatedMinutes,item.taskType,start+index+1,now,now)));await syncJourneyFromTasks(db,identity.userId,body.journeyId,now);
+  } else if (body.action === "evaluate-journey-tasks" && typeof body.journeyId === "string") {
+    const [journey,tasks]=await Promise.all([db.prepare("SELECT title,acceptance_criteria FROM journeys WHERE id=? AND user_id=? AND deleted_at IS NULL").bind(body.journeyId,identity.userId).first<{title:string;acceptance_criteria:string}>(),db.prepare("SELECT title,acceptance_criteria,estimated_minutes,status FROM journey_tasks WHERE journey_id=? AND user_id=? ORDER BY priority,rowid").bind(body.journeyId,identity.userId).all<{title:string;acceptance_criteria:string;estimated_minutes:number;status:string}>()]);if(!journey)return NextResponse.json({error:"not_found"},{status:404});return NextResponse.json({ok:true,evaluation:await evaluateJourneyTasks(journey,tasks.results)});
   } else if (body.action === "generate-month-outcomes") {
-    const [profile,journeyRows,currentRows]=await Promise.all([
-      db.prepare("SELECT vision FROM profiles WHERE user_id=?").bind(identity.userId).first<{vision:string}>(),
-      db.prepare("SELECT id,title,area,acceptance_criteria FROM journeys WHERE user_id=? AND status='active' AND deleted_at IS NULL ORDER BY sequence_number LIMIT 8").bind(identity.userId).all<{id:string;title:string;area:string;acceptance_criteria:string}>(),
+    const [taskRows,currentRows]=await Promise.all([
+      db.prepare("SELECT t.id,t.journey_id,j.title AS journey_title,j.area,t.title,t.acceptance_criteria,t.estimated_minutes,t.task_type,t.priority FROM journey_tasks t JOIN journeys j ON j.id=t.journey_id WHERE t.user_id=? AND t.status='pending' AND j.status='active' AND j.deleted_at IS NULL AND t.id NOT IN (SELECT source_task_id FROM monthly_outcomes WHERE user_id=? AND status='active') ORDER BY j.sequence_number,t.priority LIMIT 30").bind(identity.userId,identity.userId).all<JourneyTaskCandidate>(),
       db.prepare("SELECT title,status FROM monthly_outcomes WHERE user_id=? AND period=?").bind(identity.userId,periods.month).all<{title:string;status:string}>(),
     ]);
     if(currentRows.results.some((item)=>item.status!=="active"))return NextResponse.json({error:"month_settled"},{status:409});
     const slots=Math.max(0,5-currentRows.results.length);
     if(!slots)return NextResponse.json({error:"month_outcomes_full"},{status:409});
-    if(!journeyRows.results.length)return NextResponse.json({error:"no_active_journey"},{status:409});
-    const items=await generateMonthPlan(profile?.vision||"",journeyRows.results,currentRows.results.map((item)=>item.title),slots);
-    if(!items.length)return NextResponse.json({error:"generation_failed"},{status:503});
-    await db.batch(items.map((item)=>db.prepare("INSERT INTO monthly_outcomes (id,user_id,title,acceptance_criteria,progress,expected_hours,status,journey_id,kind,period) VALUES (?,?,?,?,0,?,'active',?,?,?)").bind(crypto.randomUUID(),identity.userId,item.title,item.acceptanceCriteria,item.expectedHours,item.journeyId,item.kind,periods.month)));
+    if(!taskRows.results.length)return NextResponse.json({error:"no_journey_tasks"},{status:409});
+    const candidates=taskRows.results.slice(0,slots);
+    await db.batch(candidates.map((item)=>db.prepare("INSERT INTO monthly_outcomes (id,user_id,title,acceptance_criteria,progress,expected_hours,status,journey_id,kind,period,source_task_id) VALUES (?,?,?,?,0,?,'active',?,'milestone',?,?)").bind(crypto.randomUUID(),identity.userId,item.title,item.acceptance_criteria,Math.max(1,Math.ceil(item.estimated_minutes/60)),item.journey_id,periods.month,item.id)));
   } else if (body.action === "settle-month") {
     if(Number(periods.localDate.slice(8,10))<25)return NextResponse.json({error:"month_not_ready"},{status:409});
     const rows=await db.prepare("SELECT * FROM monthly_outcomes WHERE user_id=? AND period=? AND status='active'").bind(identity.userId,periods.month).all<{id:string;title:string;acceptance_criteria:string;progress:number;expected_hours:number;journey_id:string;kind:string}>();
@@ -347,11 +438,16 @@ export async function POST(request: Request) {
   } else if (body.action === "delete-outcome" && typeof body.id === "string") {
     await db.batch([db.prepare("UPDATE weekly_actions SET outcome_id='' WHERE user_id=? AND outcome_id=?").bind(identity.userId,body.id),db.prepare("DELETE FROM monthly_outcomes WHERE id=? AND user_id=?").bind(body.id,identity.userId)]);
   } else if (body.action === "add-weekly-action" || body.action === "update-weekly-action") {
-    const title = clean(body.title, 120), outcomeId = clean(body.outcomeId, 100), scheduledFor = clean(body.scheduledFor, 12) || "本周";
+    let title = clean(body.title, 120), outcomeId = clean(body.outcomeId, 100), scheduledFor = clean(body.scheduledFor, 12) || "本周",sourceTaskId=clean(body.sourceTaskId,100);
     const minutes = Math.max(15, Math.min(600, Number(body.estimatedMinutes) || 30)), taskType = clean(body.taskType, 20), isSideHustle = body.isSideHustle ? 1 : 0;
+    if(body.action==="add-weekly-action"){
+      const source=await db.prepare("SELECT title,task_type,journey_id FROM journey_tasks WHERE id=? AND user_id=? AND status='pending'").bind(sourceTaskId,identity.userId).first<{title:string;task_type:string;journey_id:string}>();
+      if(!source)return NextResponse.json({error:"invalid_source_task"},{status:400});title=source.title;
+      if(!outcomeId)outcomeId=(await db.prepare("SELECT id FROM monthly_outcomes WHERE user_id=? AND status='active' AND (source_task_id=? OR journey_id=?) ORDER BY CASE WHEN source_task_id=? THEN 0 ELSE 1 END LIMIT 1").bind(identity.userId,sourceTaskId,source.journey_id,sourceTaskId).first<{id:string}>())?.id||"";
+    }
     if (!title || !["reading","finance","exercise","english","general"].includes(taskType)) return NextResponse.json({ error: "invalid_task" }, { status: 400 });
     if (outcomeId) { const outcome = await db.prepare("SELECT id FROM monthly_outcomes WHERE id=? AND user_id=?").bind(outcomeId,identity.userId).first(); if (!outcome) return NextResponse.json({ error: "invalid_outcome" }, { status: 400 }); }
-    if (body.action === "add-weekly-action") { const priority = await db.prepare("SELECT COALESCE(MAX(priority),0) AS value FROM weekly_actions WHERE user_id=? AND cycle_id=?").bind(identity.userId,activeCycleId).first<{value:number}>(); await db.prepare("INSERT INTO weekly_actions (id,user_id,outcome_id,title,estimated_minutes,scheduled_for,priority,status,task_type,source,is_side_hustle,cycle_id) VALUES (?,?,?,?,?,?,?,'pending',?,'manual',?,?)").bind(crypto.randomUUID(),identity.userId,outcomeId,title,minutes,scheduledFor,(priority?.value??0)+1,taskType,isSideHustle,activeCycleId).run(); }
+    if (body.action === "add-weekly-action") { const priority = await db.prepare("SELECT COALESCE(MAX(priority),0) AS value FROM weekly_actions WHERE user_id=? AND cycle_id=?").bind(identity.userId,activeCycleId).first<{value:number}>(); await db.prepare("INSERT INTO weekly_actions (id,user_id,outcome_id,title,estimated_minutes,scheduled_for,priority,status,task_type,source,is_side_hustle,cycle_id,source_task_id) VALUES (?,?,?,?,?,?,?,'pending',?,'manual',?,?,?)").bind(crypto.randomUUID(),identity.userId,outcomeId,title,minutes,scheduledFor,(priority?.value??0)+1,taskType,isSideHustle,activeCycleId,sourceTaskId).run(); }
     else if (typeof body.id === "string") await db.prepare("UPDATE weekly_actions SET outcome_id=?,title=?,estimated_minutes=?,scheduled_for=?,task_type=?,source='manual',is_side_hustle=? WHERE id=? AND user_id=?").bind(outcomeId,title,minutes,scheduledFor,taskType,isSideHustle,body.id,identity.userId).run();
     else return NextResponse.json({ error: "missing_id" }, { status: 400 });
   } else if (body.action === "delete-weekly-action" && typeof body.id === "string") {
@@ -365,10 +461,9 @@ export async function POST(request: Request) {
     const priority=await db.prepare("SELECT COALESCE(MAX(priority),0) AS value FROM weekly_actions WHERE user_id=? AND cycle_id=?").bind(identity.userId,activeCycleId).first<{value:number}>();
     await db.prepare("INSERT INTO weekly_actions (id,user_id,outcome_id,title,estimated_minutes,scheduled_for,priority,status,task_type,source,is_side_hustle,cycle_id,carried_from_id) VALUES (?,?,?,?,?,?,?,'pending',?,'carried',?,?,?)").bind(crypto.randomUUID(),identity.userId,rolledOutcome?.id||old.outcome_id,old.title,old.estimated_minutes,"本周",Number(priority?.value??0)+1,old.task_type,old.is_side_hustle,activeCycleId,old.id).run();
   } else if (body.action === "generate-week-plan") {
-    const [profile, journeyRows, outcomeRows, latestReview] = await Promise.all([
+    const [profile, taskRows, latestReview] = await Promise.all([
       db.prepare("SELECT vision, weekly_capacity_minutes, weekly_goal,side_hustle_limit_minutes,protected_day FROM profiles WHERE user_id = ?").bind(identity.userId).first<{ vision: string; weekly_capacity_minutes: number; weekly_goal: string;side_hustle_limit_minutes:number;protected_day:string }>(),
-      db.prepare("SELECT title, area, status, next_action FROM journeys WHERE user_id = ? AND deleted_at IS NULL AND status IN ('active','planned') ORDER BY CASE status WHEN 'active' THEN 0 ELSE 1 END, sequence_number LIMIT 8").bind(identity.userId).all<{ title: string; area: string; status: string; next_action: string }>(),
-      db.prepare("SELECT o.id,o.title,o.kind,j.title AS journey_title FROM monthly_outcomes o LEFT JOIN journeys j ON j.id=o.journey_id WHERE o.user_id=? AND o.status='active' AND (o.period=? OR o.period='') ORDER BY o.rowid LIMIT 8").bind(identity.userId,now.slice(0,7)).all<PlanOutcome>(),
+      db.prepare("SELECT t.id,t.journey_id,j.title AS journey_title,j.area,t.title,t.acceptance_criteria,t.estimated_minutes,t.task_type,t.priority FROM journey_tasks t JOIN journeys j ON j.id=t.journey_id WHERE t.user_id=? AND t.status='pending' AND j.status='active' AND j.deleted_at IS NULL AND t.id NOT IN (SELECT source_task_id FROM weekly_actions WHERE user_id=? AND cycle_id=? AND status IN ('pending','completed')) ORDER BY j.sequence_number,t.priority LIMIT 40").bind(identity.userId,identity.userId,activeCycleId).all<JourneyTaskCandidate>(),
       db.prepare("SELECT health_check,energy_score,decision,auto_decision,kill_rule_count,next_priority FROM reviews WHERE user_id=? ORDER BY created_at DESC LIMIT 1").bind(identity.userId).first<{health_check:string;energy_score:number;decision:string;auto_decision:string;kill_rule_count:number;next_priority:string}>(),
     ]);
     const goal = clean(body.goal, 500) || profile?.weekly_goal || "推进最重要的人生目标";
@@ -378,13 +473,16 @@ export async function POST(request: Request) {
     const configuredSideLimit = Math.max(0,Math.min(720,Number(body.sideHustleLimitMinutes) || profile?.side_hustle_limit_minutes || 360));
     const sideHustleLimit = latestReview?.auto_decision === "stop" || latestReview?.decision === "stop" ? 0 : lowEnergy ? Math.floor(configuredSideLimit/2/5)*5 : configuredSideLimit;
     const protectedDay = clean(body.protectedDay,10) || profile?.protected_day || "周日";
-    const vision = clean(profile?.vision, 2000) || "建立健康、从容、持续成长且热爱日常的生活";
-    const journeys = journeyRows.results.map((item) => `${item.area}｜${item.title}（${item.status === "active" ? "进行中" : "计划中"}）：${item.next_action}`).join("；");
     const reviewContext = latestReview ? `能量${latestReview.energy_score}/10；健康：${latestReview.health_check || "未填写"}；用户决定：${latestReview.decision}；系统判断：${latestReview.auto_decision}；停止规则触发${latestReview.kill_rule_count}条；下周重点：${latestReview.next_priority}` : "";
-    const plan = await generatePlan(vision, goal, capacity, journeys, outcomeRows.results, protectedDay, sideHustleLimit, reviewContext);
+    if(!taskRows.results.length)return NextResponse.json({error:"no_journey_tasks"},{status:409});
+    const plan = await selectWeekTasks(goal, capacity, taskRows.results, protectedDay, sideHustleLimit, reviewContext);
+    if(!plan.length)return NextResponse.json({error:"no_tasks_fit_capacity"},{status:409});
     await db.prepare("UPDATE weekly_actions SET status = 'paused' WHERE user_id = ? AND cycle_id=? AND status = 'pending'").bind(identity.userId,activeCycleId).run();
     const maxPriority = await db.prepare("SELECT COALESCE(MAX(priority),0) AS value FROM weekly_actions WHERE user_id = ? AND cycle_id=?").bind(identity.userId,activeCycleId).first<{ value: number }>();
-    await db.batch(plan.map((item, index) => db.prepare("INSERT INTO weekly_actions (id,user_id,outcome_id,title,estimated_minutes,scheduled_for,priority,status,task_type,source,is_side_hustle,cycle_id) VALUES (?,?,?,?,?,?,?,'pending',?,'ai',?,?)").bind(crypto.randomUUID(), identity.userId, item.outcomeId || "", item.title, item.minutes, item.day, (maxPriority?.value ?? 0) + index + 1, item.type, item.sideHustle ? 1 : 0,activeCycleId)));
+    const outcomeByTask=new Map((await db.prepare("SELECT id,source_task_id,journey_id FROM monthly_outcomes WHERE user_id=? AND status='active' AND period=?").bind(identity.userId,periods.month).all<{id:string;source_task_id:string;journey_id:string}>()).results.map((item)=>[item.source_task_id,item.id]));
+    const taskJourney=new Map(taskRows.results.map((item)=>[item.id,item.journey_id]));
+    const outcomeByJourney=new Map((await db.prepare("SELECT id,journey_id FROM monthly_outcomes WHERE user_id=? AND status='active' AND period=? ORDER BY rowid").bind(identity.userId,periods.month).all<{id:string;journey_id:string}>()).results.map((item)=>[item.journey_id,item.id]));
+    await db.batch(plan.map((item, index) => db.prepare("INSERT INTO weekly_actions (id,user_id,outcome_id,title,estimated_minutes,scheduled_for,priority,status,task_type,source,is_side_hustle,cycle_id,source_task_id) VALUES (?,?,?,?,?,?,?,'pending',?,'ai',?,?,?)").bind(crypto.randomUUID(), identity.userId, outcomeByTask.get(item.sourceTaskId)||outcomeByJourney.get(taskJourney.get(item.sourceTaskId)||"")||"", item.title, item.minutes, item.day, (maxPriority?.value ?? 0) + index + 1, item.type, item.sideHustle ? 1 : 0,activeCycleId,item.sourceTaskId)));
     await db.prepare("UPDATE profiles SET weekly_capacity_minutes = ?, weekly_goal = ?,side_hustle_limit_minutes=?,protected_day=?, updated_at = ? WHERE user_id = ?").bind(requestedCapacity, goal,configuredSideLimit,protectedDay, now, identity.userId).run();
   } else if (body.action === "checkin" && (body.type === "exercise" || body.type === "english" || body.type === "reading")) {
     const note = clean(body.note, 3000);

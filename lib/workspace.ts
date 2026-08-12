@@ -71,7 +71,15 @@ export async function ensureSchema(db: D1Database) {
       acceptance_criteria TEXT NOT NULL, progress INTEGER NOT NULL DEFAULT 0,
       expected_hours INTEGER NOT NULL, status TEXT NOT NULL,
       journey_id TEXT NOT NULL DEFAULT '', kind TEXT NOT NULL DEFAULT 'milestone', period TEXT NOT NULL DEFAULT '',
-      settled_at TEXT, rolled_from_id TEXT NOT NULL DEFAULT ''
+      settled_at TEXT, rolled_from_id TEXT NOT NULL DEFAULT '', source_task_id TEXT NOT NULL DEFAULT ''
+    )`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS journey_tasks (
+      id TEXT PRIMARY KEY, user_id TEXT NOT NULL, journey_id TEXT NOT NULL,
+      title TEXT NOT NULL, acceptance_criteria TEXT NOT NULL,
+      estimated_minutes INTEGER NOT NULL DEFAULT 60, task_type TEXT NOT NULL DEFAULT 'general',
+      priority INTEGER NOT NULL DEFAULT 1, status TEXT NOT NULL DEFAULT 'pending',
+      source TEXT NOT NULL DEFAULT 'manual', completed_at TEXT,
+      created_at TEXT NOT NULL, updated_at TEXT NOT NULL
     )`),
     db.prepare(`CREATE TABLE IF NOT EXISTS weekly_cycles (
       id TEXT PRIMARY KEY, user_id TEXT NOT NULL, week_start TEXT NOT NULL, week_end TEXT NOT NULL,
@@ -84,7 +92,7 @@ export async function ensureSchema(db: D1Database) {
       scheduled_for TEXT NOT NULL, priority INTEGER NOT NULL,
       status TEXT NOT NULL, completed_at TEXT,
       task_type TEXT NOT NULL DEFAULT 'general', source TEXT NOT NULL DEFAULT 'manual',
-      is_side_hustle INTEGER NOT NULL DEFAULT 0, cycle_id TEXT NOT NULL DEFAULT '', carried_from_id TEXT NOT NULL DEFAULT ''
+      is_side_hustle INTEGER NOT NULL DEFAULT 0, cycle_id TEXT NOT NULL DEFAULT '', carried_from_id TEXT NOT NULL DEFAULT '', source_task_id TEXT NOT NULL DEFAULT ''
     )`),
     db.prepare(`CREATE TABLE IF NOT EXISTS checkins (
       id TEXT PRIMARY KEY, user_id TEXT NOT NULL, type TEXT NOT NULL,
@@ -135,6 +143,7 @@ export async function ensureSchema(db: D1Database) {
       severity TEXT NOT NULL, reason TEXT NOT NULL, created_at TEXT NOT NULL
     )`),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_journeys_user_status ON journeys(user_id, status)"),
+    db.prepare("CREATE INDEX IF NOT EXISTS idx_journey_tasks_journey_status ON journey_tasks(user_id, journey_id, status)"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_actions_user_status ON weekly_actions(user_id, status)"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_checkins_user_type ON checkins(user_id, type)"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_outputs_user_action ON task_outputs(user_id, action_id)"),
@@ -173,6 +182,7 @@ export async function ensureSchema(db: D1Database) {
   if (!outcomeColumns.results.some((column) => column.name === "period")) await db.prepare("ALTER TABLE monthly_outcomes ADD COLUMN period TEXT NOT NULL DEFAULT ''").run();
   if (!outcomeColumns.results.some((column) => column.name === "settled_at")) await db.prepare("ALTER TABLE monthly_outcomes ADD COLUMN settled_at TEXT").run();
   if (!outcomeColumns.results.some((column) => column.name === "rolled_from_id")) await db.prepare("ALTER TABLE monthly_outcomes ADD COLUMN rolled_from_id TEXT NOT NULL DEFAULT ''").run();
+  if (!outcomeColumns.results.some((column) => column.name === "source_task_id")) await db.prepare("ALTER TABLE monthly_outcomes ADD COLUMN source_task_id TEXT NOT NULL DEFAULT ''").run();
   const actionColumns = await db.prepare("PRAGMA table_info(weekly_actions)").all<{ name: string }>();
   if (!actionColumns.results.some((column) => column.name === "task_type")) {
     await db.prepare("ALTER TABLE weekly_actions ADD COLUMN task_type TEXT NOT NULL DEFAULT 'general'").run();
@@ -183,6 +193,7 @@ export async function ensureSchema(db: D1Database) {
   if (!actionColumns.results.some((column) => column.name === "is_side_hustle")) await db.prepare("ALTER TABLE weekly_actions ADD COLUMN is_side_hustle INTEGER NOT NULL DEFAULT 0").run();
   if (!actionColumns.results.some((column) => column.name === "cycle_id")) await db.prepare("ALTER TABLE weekly_actions ADD COLUMN cycle_id TEXT NOT NULL DEFAULT ''").run();
   if (!actionColumns.results.some((column) => column.name === "carried_from_id")) await db.prepare("ALTER TABLE weekly_actions ADD COLUMN carried_from_id TEXT NOT NULL DEFAULT ''").run();
+  if (!actionColumns.results.some((column) => column.name === "source_task_id")) await db.prepare("ALTER TABLE weekly_actions ADD COLUMN source_task_id TEXT NOT NULL DEFAULT ''").run();
   const reviewColumns = await db.prepare("PRAGMA table_info(reviews)").all<{ name: string }>();
   if (!reviewColumns.results.some((column) => column.name === "health_check")) await db.prepare("ALTER TABLE reviews ADD COLUMN health_check TEXT NOT NULL DEFAULT ''").run();
   if (!reviewColumns.results.some((column) => column.name === "market_evidence")) await db.prepare("ALTER TABLE reviews ADD COLUMN market_evidence TEXT NOT NULL DEFAULT ''").run();
