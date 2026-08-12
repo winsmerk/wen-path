@@ -3,9 +3,7 @@ import { ensureSchema, executionPeriods, getD1, getOpenAIKey, getWorkspaceIdenti
 
 export const dynamic = "force-dynamic";
 type PlanItem = { title: string; minutes: number; day: string; type: string; outcomeId?: string; sideHustle?: boolean; sourceTaskId: string };
-type PlanOutcome = { id: string; title: string; kind: string; journey_title: string };
-type MonthPlanItem = { title:string;acceptanceCriteria:string;expectedHours:number;kind:string;journeyId:string };
-type JourneyTaskCandidate = { id:string;journey_id:string;journey_title:string;area:string;title:string;acceptance_criteria:string;estimated_minutes:number;task_type:string;priority:number };
+type JourneyTaskCandidate = { id:string;journey_id:string;journey_title:string;area:string;title:string;acceptance_criteria:string;estimated_minutes:number;task_type:string;execution_frequency:"daily"|"monthly";priority:number };
 
 async function prepare() {
   const identity = await getWorkspaceIdentity();
@@ -56,21 +54,22 @@ async function generateJourneyTasks(journey:{title:string;area:string;acceptance
 当前下一步：${journey.next_action}
 已有子任务：${existing.join("；")||"暂无"}
 要求：覆盖从准备到最终验收的完整路径；不重复已有任务；每项有清晰完成标准；粒度适合在一周内推进；不要生成与征程无关的通用习惯。
-只返回JSON数组，字段 title、acceptanceCriteria、estimatedMinutes、taskType（reading、finance、exercise、english、general）。`);
+其中重复练习、健康习惯、日常记录设为 daily；一次性交付、阶段成果设为 monthly。
+只返回JSON数组，字段 title、acceptanceCriteria、estimatedMinutes、taskType（reading、finance、exercise、english、general）、executionFrequency（daily或monthly）。`);
   if(!answer)return [];
   try {
-    const parsed=JSON.parse(answer.replace(/^```json\s*|\s*```$/g,"")) as Array<{title?:string;acceptanceCriteria?:string;estimatedMinutes?:number;taskType?:string}>;
+    const parsed=JSON.parse(answer.replace(/^```json\s*|\s*```$/g,"")) as Array<{title?:string;acceptanceCriteria?:string;estimatedMinutes?:number;taskType?:string;executionFrequency?:string}>;
     const allowed=["reading","finance","exercise","english","general"];
-    return parsed.slice(0,8).map((item)=>({title:clean(item.title,120),acceptanceCriteria:clean(item.acceptanceCriteria,500),estimatedMinutes:Math.max(15,Math.min(1200,Number(item.estimatedMinutes)||60)),taskType:allowed.includes(clean(item.taskType,20))?clean(item.taskType,20):classify(clean(item.title,120))})).filter((item)=>item.title&&item.acceptanceCriteria&&!existing.includes(item.title));
+    return parsed.slice(0,8).map((item)=>({title:clean(item.title,120),acceptanceCriteria:clean(item.acceptanceCriteria,500),estimatedMinutes:Math.max(15,Math.min(1200,Number(item.estimatedMinutes)||60)),taskType:allowed.includes(clean(item.taskType,20))?clean(item.taskType,20):classify(clean(item.title,120)),executionFrequency:item.executionFrequency==="daily"?"daily":"monthly"})).filter((item)=>item.title&&item.acceptanceCriteria&&!existing.includes(item.title));
   } catch{return [];}
 }
 
-async function evaluateJourneyTasks(journey:{title:string;acceptance_criteria:string},tasks:Array<{title:string;acceptance_criteria:string;estimated_minutes:number;status:string}>) {
+async function evaluateJourneyTasks(journey:{title:string;acceptance_criteria:string},tasks:Array<{title:string;acceptance_criteria:string;estimated_minutes:number;execution_frequency:string;status:string}>) {
   const answer=await askOpenAI(`评估一个征程的子任务设计是否合理。
 征程：${journey.title}
 最终验收：${journey.acceptance_criteria}
-子任务：${tasks.map((item,index)=>`${index+1}. ${item.title}｜完成标准：${item.acceptance_criteria}｜${item.estimated_minutes}分钟｜${item.status}`).join("\n")||"暂无"}
-请检查：是否覆盖最终验收、顺序和依赖是否合理、粒度是否适合月/周计划、是否重复或遗漏、是否存在无法验证的描述。
+子任务：${tasks.map((item,index)=>`${index+1}. ${item.title}｜完成标准：${item.acceptance_criteria}｜单次${item.estimated_minutes}分钟｜频率：${item.execution_frequency==="daily"?"每日":"每月"}｜${item.status}`).join("\n")||"暂无"}
+请检查：是否覆盖最终验收、顺序和依赖是否合理、每日/每月频率是否恰当、粒度是否适合月/周计划、是否重复或遗漏、是否存在无法验证的描述。
 只返回JSON：score（0-100）、summary（简短结论）、strengths（字符串数组）、issues（字符串数组）、suggestions（字符串数组）。`);
   if(!answer)return {score:0,summary:"AI 暂时无法评估，请稍后重试。",strengths:[],issues:["未获得 AI 评估结果"],suggestions:[]};
   try {
@@ -82,26 +81,40 @@ async function evaluateJourneyTasks(journey:{title:string;acceptance_criteria:st
 
 async function selectWeekTasks(goal:string,capacity:number,candidates:JourneyTaskCandidate[],protectedDay:string,sideHustleLimit:number,reviewContext:string):Promise<PlanItem[]> {
   if(!candidates.length)return [];
+  const days=["周一","周二","周三","周四","周五","周六","周日"].filter((day)=>day!==protectedDay);
+  const limit=capacity*.85;
+  let used=0,sideUsed=0;
+  const recurring:PlanItem[]=[];
+  for(const day of days){
+    for(const item of candidates.filter((candidate)=>candidate.execution_frequency==="daily")){
+      const minutes=Math.max(15,Number(item.estimated_minutes)||30);
+      if(used+minutes>limit)continue;
+      const wantsSide=/职业|收入/.test(item.area),side=wantsSide&&sideUsed+minutes<=sideHustleLimit;
+      used+=minutes;if(side)sideUsed+=minutes;
+      recurring.push({title:item.title,minutes,day,type:["reading","finance","exercise","english","general"].includes(item.task_type)?item.task_type:"general",outcomeId:"",sideHustle:side,sourceTaskId:item.id});
+    }
+  }
+  const monthlyCandidates=candidates.filter((item)=>item.execution_frequency!=="daily");
+  if(!monthlyCandidates.length||used>=limit)return recurring;
   const answer=await askOpenAI(`从现有征程子任务中选择本周任务。绝对不要新建、改写或拼接任务。
 本周目标：${goal}
 可用时间：${capacity}分钟（最多使用85%）
 副业上限：${sideHustleLimit}分钟；休息日：${protectedDay}
 最近复盘：${reviewContext||"暂无"}
-候选子任务：${candidates.map((item)=>`${item.id}｜${item.area}｜${item.journey_title} → ${item.title}｜${item.estimated_minutes}分钟｜类型${item.task_type}｜优先级${item.priority}`).join("；")}
-选择1-5项最能推进目标且容量合理的任务。只返回JSON数组，每项字段 sourceTaskId、day、sideHustle；sourceTaskId必须来自候选列表。`);
+每日任务已先占用${used}分钟。剩余候选月度任务：${monthlyCandidates.map((item)=>`${item.id}｜${item.area}｜${item.journey_title} → ${item.title}｜${item.estimated_minutes}分钟｜类型${item.task_type}｜优先级${item.priority}`).join("；")}
+从月度任务中选择0-5项最能推进目标且能放入剩余容量的任务。只返回JSON数组，每项字段 sourceTaskId、day、sideHustle；sourceTaskId必须来自候选列表。`);
   let selected:Array<{sourceTaskId?:string;day?:string;sideHustle?:boolean}>=[];
   if(answer)try{selected=JSON.parse(answer.replace(/^```json\s*|\s*```$/g,""));}catch{/* fallback */}
-  const byId=new Map(candidates.map((item)=>[item.id,item]));
-  const days=["周一","周二","周三","周四","周五","周六","周日"].filter((day)=>day!==protectedDay);
-  if(!Array.isArray(selected)||!selected.length)selected=candidates.slice(0,Math.min(5,candidates.length)).map((item,index)=>({sourceTaskId:item.id,day:days[index%days.length],sideHustle:/职业|收入/.test(item.area)}));
-  let used=0,sideUsed=0;
-  return selected.flatMap((pick,index)=>{
+  const byId=new Map(monthlyCandidates.map((item)=>[item.id,item]));
+  if(!Array.isArray(selected)||!selected.length)selected=monthlyCandidates.slice(0,Math.min(5,monthlyCandidates.length)).map((item,index)=>({sourceTaskId:item.id,day:days[index%days.length],sideHustle:/职业|收入/.test(item.area)}));
+  const selectedMonthly=selected.flatMap((pick,index)=>{
     const item=byId.get(clean(pick.sourceTaskId,100));if(!item)return [];
     const minutes=Math.max(15,Number(item.estimated_minutes)||60),side=Boolean(pick.sideHustle)&&sideUsed+minutes<=sideHustleLimit;
-    if(used+minutes>capacity*.85)return [];
+    if(used+minutes>limit)return [];
     used+=minutes;if(side)sideUsed+=minutes;
     return [{title:item.title,minutes,day:clean(pick.day,12)===protectedDay?"本周":clean(pick.day,12)||days[index%days.length]||"本周",type:["reading","finance","exercise","english","general"].includes(item.task_type)?item.task_type:"general",outcomeId:"",sideHustle:side,sourceTaskId:item.id}];
   });
+  return [...recurring,...selectedMonthly];
 }
 
 function classify(goal: string) {
@@ -112,84 +125,12 @@ function classify(goal: string) {
   return "general";
 }
 
-function fallbackPlan(vision: string, goal: string, capacity: number, outcomes: PlanOutcome[], protectedDay: string, sideHustleLimit: number): PlanItem[] {
-  const mainType = classify(goal);
-  const visionFocus = vision.split(/[。！？；;]+/).map((item) => item.trim()).filter(Boolean).at(-1)?.replace(/^最重要的是[，,:：]?\s*/, "").slice(0, 24) || "想要的生活";
-  const main = { type: mainType, title: `本周主线｜为“${goal.slice(0, 30)}”完成一个可验证成果` };
-  const dimensions = [
-    { type: "exercise", title: "身体健康｜完成一次运动并记录时长与身体感受" },
-    { type: "english", title: "英语能力｜用英语讲述本周目标，并整理一页纠正笔记" },
-    { type: "finance", title: "财务基础｜更新本周现金流，并写下一个具体财务决定" },
-    { type: "reading", title: "认知成长｜围绕本周目标阅读，并输出三点读书笔记" },
-    { type: "general", title: `愿景校准｜对照“${visionFocus}”，复盘取舍并确定下一步` },
-  ].filter((item) => item.type !== mainType);
-  const count = capacity < 180 ? 3 : capacity < 420 ? 4 : 5;
-  const usableMinutes = Math.floor(capacity * 0.85 / 5) * 5;
-  const minutes = Math.max(15, Math.floor(usableMinutes / count / 5) * 5);
-  const days = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"].filter((day) => day !== protectedDay);
-  const visionTask = dimensions.find((item) => item.type === "general");
-  const candidates = [main, ...(visionTask ? [visionTask] : []), ...dimensions.filter((item) => item !== visionTask)];
-  let assignedSideHustleMinutes = 0;
-  return candidates.slice(0, count).map((item, index) => {
-    const wantsSideHustle = /职业|收入|作品|商业|副业/.test(item.title);
-    const sideHustle = wantsSideHustle && assignedSideHustleMinutes + minutes <= sideHustleLimit;
-    if (sideHustle) assignedSideHustleMinutes += minutes;
-    return { ...item, minutes, day: days[index % days.length], outcomeId: outcomes.find((outcome) => classify(outcome.title) === item.type)?.id || outcomes[index % Math.max(1,outcomes.length)]?.id || "", sideHustle,sourceTaskId:"" };
-  });
-}
-
-async function generatePlan(vision: string, goal: string, capacity: number, journeys: string, outcomes: PlanOutcome[], protectedDay: string, sideHustleLimit: number, reviewContext: string): Promise<PlanItem[]> {
-  const outcomeContext = outcomes.map((item) => `${item.id}｜${item.journey_title} → ${item.title}（${item.kind === "habit" ? "持续习惯" : "里程碑"}）`).join("；") || "暂无月度成果";
-  const answer = await askOpenAI(`请为用户生成一份不机械、能真正推进生活的本周计划。
-
-完整愿景：${vision}
-本周目标：${goal}
-正在推进或计划中的征程：${journeys || "暂无明确征程"}
-本月成果（每项开头是可用的outcomeId）：${outcomeContext}
-本周可用时间：${capacity}分钟
-副业时间上限：${sideHustleLimit}分钟
-完全休息日：${protectedDay}
-最近复盘：${reviewContext || "暂无"}
-
-生成规则：
-1. 生成3-5个任务，总时长不超过可用时间的85%，保留余量。
-2. 本周目标是主线，但任务需从至少2个相关维度展开，可选维度包括身体健康、英语与学习、职业与能力、财务与收入、关系与家庭、探索与生活；不要为了凑数覆盖所有维度。
-3. 每个任务都必须具体、可执行、有可验证的完成成果，标题格式为“维度｜行动与成果”。
-4. 结合愿景和当前征程做取舍，避免重复、空泛和连续安排同一种任务。
-5. 不得安排在完全休息日；所有sideHustle为true的任务总时长不得超过副业时间上限。复盘能量低时减少数量和总时长；复盘决定stop时不生成副业任务。
-6. 每个任务优先关联一个最匹配的本月成果，outcomeId只能使用上方提供的ID；没有合适成果时为空字符串。
-7. day使用周一至周六、本周；type只能是 reading、finance、exercise、english、general。
-8. 只返回JSON数组，每项字段为 title、minutes、day、type、outcomeId、sideHustle，不要附加解释。`);
-  if (answer) {
-    try {
-      const parsed = JSON.parse(answer.replace(/^```json\s*|\s*```$/g, "")) as PlanItem[];
-      if (Array.isArray(parsed) && parsed.length >= 3) {
-        const allowed = ["reading", "finance", "exercise", "english", "general"];
-        const outcomeIds = new Set(outcomes.map((item) => item.id));
-        const safe = parsed.slice(0, 5).map((item) => ({ title: clean(item.title, 100), minutes: Math.max(15, Math.min(180, Number(item.minutes) || 30)), day: clean(item.day, 12) === protectedDay ? "本周" : clean(item.day, 12) || "本周", type: allowed.includes(item.type) ? item.type : "general", outcomeId: outcomeIds.has(clean(item.outcomeId,100)) ? clean(item.outcomeId,100) : "", sideHustle: Boolean(item.sideHustle),sourceTaskId:"" }));
-        const dimensions = new Set(safe.map((item) => item.type));
-        const sideHustleMinutes = safe.filter((item)=>item.sideHustle).reduce((sum,item)=>sum+item.minutes,0);
-        if (safe.every((item) => item.title) && dimensions.size >= 2 && safe.reduce((sum, item) => sum + item.minutes, 0) <= capacity * 0.85 && sideHustleMinutes <= sideHustleLimit) return safe;
-      }
-    } catch { /* use deterministic fallback */ }
-  }
-  return fallbackPlan(vision, goal, capacity, outcomes, protectedDay, sideHustleLimit);
-}
-
-async function generateMonthPlan(vision:string, journeys:Array<{id:string;title:string;area:string;acceptance_criteria:string}>, existing:string[], count:number):Promise<MonthPlanItem[]> {
-  const answer = await askOpenAI(`基于40岁愿景和当前征程，生成${count}个本月成果候选。
-愿景：${vision}
-当前征程：${journeys.map((item)=>`${item.id}｜${item.area}｜${item.title}｜验收：${item.acceptance_criteria}`).join("；")}
-已有成果：${existing.join("；")||"暂无"}
-规则：成果必须直接推进一个征程；避免与已有成果重复；最多一个持续习惯，其余是一次性里程碑；必须有明确验收标准。
-只返回JSON数组，字段 title、acceptanceCriteria、expectedHours、kind（habit或milestone）、journeyId。`);
-  if (answer) try {
-    const parsed=JSON.parse(answer.replace(/^```json\s*|\s*```$/g,"")) as MonthPlanItem[];
-    const journeyIds=new Set(journeys.map((item)=>item.id));
-    const safe=parsed.slice(0,count).map((item)=>({title:clean(item.title,100),acceptanceCriteria:clean(item.acceptanceCriteria,500),expectedHours:Math.max(1,Math.min(80,Number(item.expectedHours)||6)),kind:item.kind==="habit"?"habit":"milestone",journeyId:journeyIds.has(clean(item.journeyId,100))?clean(item.journeyId,100):""})).filter((item)=>item.title&&item.acceptanceCriteria&&item.journeyId&&!existing.some((title)=>title===item.title));
-    if(safe.length)return safe;
-  } catch { /* deterministic fallback below */ }
-  return journeys.slice(0,count).map((journey,index)=>({title:`推进「${journey.title}」的本月可验证成果`,acceptanceCriteria:`完成并保存能够满足“${journey.acceptance_criteria.slice(0,120)}”的阶段成果`,expectedHours:index===0?10:6,kind:"milestone",journeyId:journey.id}));
+function remainingPlanningDays(localDate:string,protectedDay:string) {
+  const labels=["周日","周一","周二","周三","周四","周五","周六"];
+  const start=new Date(`${localDate}T00:00:00Z`),end=new Date(start);end.setUTCMonth(end.getUTCMonth()+1,0);
+  let total=0;
+  for(const cursor=new Date(start);cursor<=end;cursor.setUTCDate(cursor.getUTCDate()+1))if(labels[cursor.getUTCDay()]!==protectedDay)total++;
+  return Math.max(1,total);
 }
 
 async function reviewJourneyEvidence(title:string,criteria:string,evidence:string) {
@@ -260,11 +201,11 @@ async function refreshProgress(db: D1Database, userId: string) {
   ]);
   const [outcomeRows, actionRows, checkinRows, outputRows, journeyRows,journeyTaskRows] = await Promise.all([
     db.prepare("SELECT id,journey_id,title,acceptance_criteria,progress,kind,source_task_id FROM monthly_outcomes WHERE user_id=? AND status='active' AND period=?").bind(userId,month).all<{id:string;journey_id:string;title:string;acceptance_criteria:string;progress:number;kind:string;source_task_id:string}>(),
-    db.prepare("SELECT a.id,a.outcome_id,a.status FROM weekly_actions a LEFT JOIN weekly_cycles c ON c.id=a.cycle_id WHERE a.user_id=? AND c.week_start>=? AND c.week_start<=?").bind(userId,monthStart,`${month}-31`).all<{id:string;outcome_id:string;status:string}>(),
+    db.prepare("SELECT a.id,a.outcome_id,a.source_task_id,a.status FROM weekly_actions a LEFT JOIN weekly_cycles c ON c.id=a.cycle_id WHERE a.user_id=? AND c.week_start>=? AND c.week_start<=?").bind(userId,monthStart,`${month}-31`).all<{id:string;outcome_id:string;source_task_id:string;status:string}>(),
     db.prepare("SELECT evidence_type AS type,COUNT(*) AS total FROM evidence_events WHERE user_id=? AND occurred_at>=? AND occurred_at<=? GROUP BY evidence_type").bind(userId,monthStart,monthEnd).all<{type:string;total:number}>(),
     db.prepare("SELECT evidence_type AS task_type,COUNT(DISTINCT action_id) AS total FROM evidence_events WHERE user_id=? AND source_type='task_output' AND occurred_at>=? AND occurred_at<=? GROUP BY evidence_type").bind(userId,monthStart,monthEnd).all<{task_type:string;total:number}>(),
     db.prepare("SELECT id,status,progress FROM journeys WHERE user_id=? AND deleted_at IS NULL").bind(userId).all<{id:string;status:string;progress:number}>(),
-    db.prepare("SELECT id,journey_id,status FROM journey_tasks WHERE user_id=?").bind(userId).all<{id:string;journey_id:string;status:string}>(),
+    db.prepare("SELECT id,journey_id,status,execution_frequency FROM journey_tasks WHERE user_id=?").bind(userId).all<{id:string;journey_id:string;status:string;execution_frequency:string}>(),
   ]);
   const evidenceCounts = new Map<string,number>();
   for (const row of checkinRows.results) evidenceCounts.set(row.type, Number(row.total));
@@ -274,7 +215,14 @@ async function refreshProgress(db: D1Database, userId: string) {
   const updates: D1PreparedStatement[] = [];
   for (const outcome of outcomeRows.results) {
     let progress = Number(outcome.progress);
-    if(outcome.source_task_id){progress=journeyTaskRows.results.find((item)=>item.id===outcome.source_task_id)?.status==="completed"?100:0;}
+    if(outcome.source_task_id){
+      const sourceTask=journeyTaskRows.results.find((item)=>item.id===outcome.source_task_id);
+      if(sourceTask?.execution_frequency==="daily"){
+        const target=Number(`${outcome.title}${outcome.acceptance_criteria}`.match(/(\d+)\s*次/)?.[1]??1);
+        const completed=actionRows.results.filter((item)=>item.source_task_id===outcome.source_task_id&&item.status==="completed").length;
+        progress=Math.min(100,Math.round(completed/Math.max(1,target)*100));
+      } else progress=sourceTask?.status==="completed"?100:0;
+    }
     else if (outcome.kind === "habit") {
       const type = /运动|健康/.test(outcome.title) ? "exercise" : /英语|英文|口语/.test(outcome.title) ? "english" : /读书|阅读/.test(outcome.title) ? "reading" : "";
       const target = Number(`${outcome.title}${outcome.acceptance_criteria}`.match(/(\d+)\s*次/)?.[1] ?? 12);
@@ -289,7 +237,13 @@ async function refreshProgress(db: D1Database, userId: string) {
   for (const journey of journeyRows.results) {
     const linkedTasks=journeyTaskRows.results.filter((item)=>item.journey_id===journey.id);
     const linked = outcomeRows.results.filter((item) => item.journey_id === journey.id).map((item) => outcomeProgress.get(item.id) ?? 0);
-    const calculated = linkedTasks.length?Math.round(linkedTasks.filter((item)=>item.status==="completed").length/linkedTasks.length*100):linked.length ? Math.round(linked.reduce((sum,item)=>sum+item,0)/linked.length) : journey.progress;
+    const taskProgress=linkedTasks.map((item)=>{
+      if(item.status==="completed")return 100;
+      if(item.execution_frequency!=="daily")return 0;
+      const recurringOutcome=outcomeRows.results.find((outcome)=>outcome.source_task_id===item.id);
+      return recurringOutcome?outcomeProgress.get(recurringOutcome.id)??0:0;
+    });
+    const calculated = taskProgress.length?Math.round(taskProgress.reduce((sum,item)=>sum+item,0)/taskProgress.length):linked.length ? Math.round(linked.reduce((sum,item)=>sum+item,0)/linked.length) : journey.progress;
     const progress = journey.status === "completed" ? 100 : calculated;
     if (progress !== journey.progress) updates.push(db.prepare("UPDATE journeys SET progress=? WHERE id=? AND user_id=?").bind(progress,journey.id,userId));
   }
@@ -363,7 +317,7 @@ export async function POST(request: Request) {
     if (!row) return NextResponse.json({ error: "not_found" }, { status: 404 });
     const status = row.status === "completed" ? "pending" : "completed";
     await db.prepare("UPDATE weekly_actions SET status = ?, completed_at = ? WHERE id = ? AND user_id = ?").bind(status, status === "completed" ? now : null, body.id, identity.userId).run();
-    if(row.source_task_id){const task=await db.prepare("SELECT journey_id FROM journey_tasks WHERE id=? AND user_id=?").bind(row.source_task_id,identity.userId).first<{journey_id:string}>();if(task){await db.prepare("UPDATE journey_tasks SET status=?,completed_at=?,updated_at=? WHERE id=? AND user_id=?").bind(status==="completed"?"completed":"pending",status==="completed"?now:null,now,row.source_task_id,identity.userId).run();await syncJourneyFromTasks(db,identity.userId,task.journey_id,now);}}
+    if(row.source_task_id){const task=await db.prepare("SELECT journey_id,execution_frequency FROM journey_tasks WHERE id=? AND user_id=?").bind(row.source_task_id,identity.userId).first<{journey_id:string;execution_frequency:string}>();if(task&&task.execution_frequency!=="daily"){await db.prepare("UPDATE journey_tasks SET status=?,completed_at=?,updated_at=? WHERE id=? AND user_id=?").bind(status==="completed"?"completed":"pending",status==="completed"?now:null,now,row.source_task_id,identity.userId).run();await syncJourneyFromTasks(db,identity.userId,task.journey_id,now);}}
   } else if (body.action === "complete-task" && typeof body.id === "string") {
     const task = await db.prepare("SELECT * FROM weekly_actions WHERE id = ? AND user_id = ?").bind(body.id, identity.userId).first<{ id: string; title: string; task_type: string;source_task_id:string }>();
     if (!task) return NextResponse.json({ error: "not_found" }, { status: 404 });
@@ -380,19 +334,19 @@ export async function POST(request: Request) {
     }
     await db.prepare("INSERT INTO task_outputs (id,user_id,action_id,task_type,title,content,duration,feeling,created_at) VALUES (?,?,?,?,?,?,?,?,?)").bind(crypto.randomUUID(), identity.userId, task.id, task.task_type, task.title, content, duration, feeling, now).run();
     await db.prepare("UPDATE weekly_actions SET status = 'completed', completed_at = ? WHERE id = ? AND user_id = ?").bind(now, task.id, identity.userId).run();
-    if(task.source_task_id){const source=await db.prepare("SELECT journey_id FROM journey_tasks WHERE id=? AND user_id=?").bind(task.source_task_id,identity.userId).first<{journey_id:string}>();if(source){await db.prepare("UPDATE journey_tasks SET status='completed',completed_at=?,updated_at=? WHERE id=? AND user_id=?").bind(now,now,task.source_task_id,identity.userId).run();await syncJourneyFromTasks(db,identity.userId,source.journey_id,now);}}
+    if(task.source_task_id){const source=await db.prepare("SELECT journey_id,execution_frequency FROM journey_tasks WHERE id=? AND user_id=?").bind(task.source_task_id,identity.userId).first<{journey_id:string;execution_frequency:string}>();if(source&&source.execution_frequency!=="daily"){await db.prepare("UPDATE journey_tasks SET status='completed',completed_at=?,updated_at=? WHERE id=? AND user_id=?").bind(now,now,task.source_task_id,identity.userId).run();await syncJourneyFromTasks(db,identity.userId,source.journey_id,now);}}
   } else if (body.action === "weekly-settings") {
     const capacity = Math.max(60, Math.min(2400, Number(body.capacityMinutes) || 420)), goal = clean(body.goal, 500);
     const sideHustleLimit = Math.max(0,Math.min(720,Number(body.sideHustleLimitMinutes) || 360)), protectedDay = clean(body.protectedDay,10) || "周日";
     await db.prepare("UPDATE profiles SET weekly_capacity_minutes=?,weekly_goal=?,side_hustle_limit_minutes=?,protected_day=?,updated_at=? WHERE user_id=?").bind(capacity,goal,sideHustleLimit,protectedDay,now,identity.userId).run();
     await db.prepare("UPDATE weekly_cycles SET goal=?,capacity_minutes=? WHERE id=? AND user_id=?").bind(goal,capacity,activeCycleId,identity.userId).run();
   } else if (body.action === "add-journey-task" || body.action === "update-journey-task") {
-    const journeyId=clean(body.journeyId,100),title=clean(body.title,120),acceptance=clean(body.acceptanceCriteria,500),taskType=clean(body.taskType,20);
+    const journeyId=clean(body.journeyId,100),title=clean(body.title,120),acceptance=clean(body.acceptanceCriteria,500),taskType=clean(body.taskType,20),executionFrequency=clean(body.executionFrequency,20);
     const minutes=Math.max(15,Math.min(1200,Number(body.estimatedMinutes)||60));
-    if(!journeyId||!title||!acceptance||!["reading","finance","exercise","english","general"].includes(taskType))return NextResponse.json({error:"invalid_journey_task"},{status:400});
+    if(!journeyId||!title||!acceptance||!["reading","finance","exercise","english","general"].includes(taskType)||!["daily","monthly"].includes(executionFrequency))return NextResponse.json({error:"invalid_journey_task"},{status:400});
     const journey=await db.prepare("SELECT id FROM journeys WHERE id=? AND user_id=? AND deleted_at IS NULL").bind(journeyId,identity.userId).first();if(!journey)return NextResponse.json({error:"not_found"},{status:404});
-    if(body.action==="add-journey-task"){const priority=await db.prepare("SELECT COALESCE(MAX(priority),0) AS value FROM journey_tasks WHERE user_id=? AND journey_id=?").bind(identity.userId,journeyId).first<{value:number}>();await db.prepare("INSERT INTO journey_tasks (id,user_id,journey_id,title,acceptance_criteria,estimated_minutes,task_type,priority,status,source,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?, 'pending','manual',?,?)").bind(crypto.randomUUID(),identity.userId,journeyId,title,acceptance,minutes,taskType,Number(priority?.value??0)+1,now,now).run();}
-    else if(typeof body.id==="string")await db.prepare("UPDATE journey_tasks SET title=?,acceptance_criteria=?,estimated_minutes=?,task_type=?,updated_at=? WHERE id=? AND journey_id=? AND user_id=?").bind(title,acceptance,minutes,taskType,now,body.id,journeyId,identity.userId).run();
+    if(body.action==="add-journey-task"){const priority=await db.prepare("SELECT COALESCE(MAX(priority),0) AS value FROM journey_tasks WHERE user_id=? AND journey_id=?").bind(identity.userId,journeyId).first<{value:number}>();await db.prepare("INSERT INTO journey_tasks (id,user_id,journey_id,title,acceptance_criteria,estimated_minutes,task_type,execution_frequency,priority,status,source,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?, 'pending','manual',?,?)").bind(crypto.randomUUID(),identity.userId,journeyId,title,acceptance,minutes,taskType,executionFrequency,Number(priority?.value??0)+1,now,now).run();}
+    else if(typeof body.id==="string")await db.prepare("UPDATE journey_tasks SET title=?,acceptance_criteria=?,estimated_minutes=?,task_type=?,execution_frequency=?,updated_at=? WHERE id=? AND journey_id=? AND user_id=?").bind(title,acceptance,minutes,taskType,executionFrequency,now,body.id,journeyId,identity.userId).run();
     else return NextResponse.json({error:"missing_id"},{status:400});
     await syncJourneyFromTasks(db,identity.userId,journeyId,now);
   } else if (body.action === "delete-journey-task" && typeof body.id === "string") {
@@ -404,20 +358,22 @@ export async function POST(request: Request) {
   } else if (body.action === "generate-journey-tasks" && typeof body.journeyId === "string") {
     const [journey,existing]=await Promise.all([db.prepare("SELECT title,area,acceptance_criteria,next_action FROM journeys WHERE id=? AND user_id=? AND deleted_at IS NULL").bind(body.journeyId,identity.userId).first<{title:string;area:string;acceptance_criteria:string;next_action:string}>(),db.prepare("SELECT title FROM journey_tasks WHERE journey_id=? AND user_id=?").bind(body.journeyId,identity.userId).all<{title:string}>()]);if(!journey)return NextResponse.json({error:"not_found"},{status:404});
     const generated=await generateJourneyTasks(journey,existing.results.map((item)=>item.title));if(!generated.length)return NextResponse.json({error:"generation_failed"},{status:503});
-    const start=existing.results.length;await db.batch(generated.map((item,index)=>db.prepare("INSERT INTO journey_tasks (id,user_id,journey_id,title,acceptance_criteria,estimated_minutes,task_type,priority,status,source,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?, 'pending','ai',?,?)").bind(crypto.randomUUID(),identity.userId,body.journeyId,item.title,item.acceptanceCriteria,item.estimatedMinutes,item.taskType,start+index+1,now,now)));await syncJourneyFromTasks(db,identity.userId,body.journeyId,now);
+    const start=existing.results.length;await db.batch(generated.map((item,index)=>db.prepare("INSERT INTO journey_tasks (id,user_id,journey_id,title,acceptance_criteria,estimated_minutes,task_type,execution_frequency,priority,status,source,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?, 'pending','ai',?,?)").bind(crypto.randomUUID(),identity.userId,body.journeyId,item.title,item.acceptanceCriteria,item.estimatedMinutes,item.taskType,item.executionFrequency,start+index+1,now,now)));await syncJourneyFromTasks(db,identity.userId,body.journeyId,now);
   } else if (body.action === "evaluate-journey-tasks" && typeof body.journeyId === "string") {
-    const [journey,tasks]=await Promise.all([db.prepare("SELECT title,acceptance_criteria FROM journeys WHERE id=? AND user_id=? AND deleted_at IS NULL").bind(body.journeyId,identity.userId).first<{title:string;acceptance_criteria:string}>(),db.prepare("SELECT title,acceptance_criteria,estimated_minutes,status FROM journey_tasks WHERE journey_id=? AND user_id=? ORDER BY priority,rowid").bind(body.journeyId,identity.userId).all<{title:string;acceptance_criteria:string;estimated_minutes:number;status:string}>()]);if(!journey)return NextResponse.json({error:"not_found"},{status:404});return NextResponse.json({ok:true,evaluation:await evaluateJourneyTasks(journey,tasks.results)});
+    const [journey,tasks]=await Promise.all([db.prepare("SELECT title,acceptance_criteria FROM journeys WHERE id=? AND user_id=? AND deleted_at IS NULL").bind(body.journeyId,identity.userId).first<{title:string;acceptance_criteria:string}>(),db.prepare("SELECT title,acceptance_criteria,estimated_minutes,execution_frequency,status FROM journey_tasks WHERE journey_id=? AND user_id=? ORDER BY priority,rowid").bind(body.journeyId,identity.userId).all<{title:string;acceptance_criteria:string;estimated_minutes:number;execution_frequency:string;status:string}>()]);if(!journey)return NextResponse.json({error:"not_found"},{status:404});return NextResponse.json({ok:true,evaluation:await evaluateJourneyTasks(journey,tasks.results)});
   } else if (body.action === "generate-month-outcomes") {
-    const [taskRows,currentRows]=await Promise.all([
-      db.prepare("SELECT t.id,t.journey_id,j.title AS journey_title,j.area,t.title,t.acceptance_criteria,t.estimated_minutes,t.task_type,t.priority FROM journey_tasks t JOIN journeys j ON j.id=t.journey_id WHERE t.user_id=? AND t.status='pending' AND j.status='active' AND j.deleted_at IS NULL AND t.id NOT IN (SELECT source_task_id FROM monthly_outcomes WHERE user_id=? AND status='active') ORDER BY j.sequence_number,t.priority LIMIT 30").bind(identity.userId,identity.userId).all<JourneyTaskCandidate>(),
+    const [taskRows,currentRows,profile]=await Promise.all([
+      db.prepare("SELECT t.id,t.journey_id,j.title AS journey_title,j.area,t.title,t.acceptance_criteria,t.estimated_minutes,t.task_type,t.execution_frequency,t.priority FROM journey_tasks t JOIN journeys j ON j.id=t.journey_id WHERE t.user_id=? AND t.status='pending' AND j.status='active' AND j.deleted_at IS NULL AND t.id NOT IN (SELECT source_task_id FROM monthly_outcomes WHERE user_id=? AND status='active') ORDER BY CASE WHEN t.execution_frequency='daily' THEN 0 ELSE 1 END,j.sequence_number,t.priority LIMIT 30").bind(identity.userId,identity.userId).all<JourneyTaskCandidate>(),
       db.prepare("SELECT title,status FROM monthly_outcomes WHERE user_id=? AND period=?").bind(identity.userId,periods.month).all<{title:string;status:string}>(),
+      db.prepare("SELECT protected_day FROM profiles WHERE user_id=?").bind(identity.userId).first<{protected_day:string}>(),
     ]);
     if(currentRows.results.some((item)=>item.status!=="active"))return NextResponse.json({error:"month_settled"},{status:409});
     const slots=Math.max(0,5-currentRows.results.length);
     if(!slots)return NextResponse.json({error:"month_outcomes_full"},{status:409});
     if(!taskRows.results.length)return NextResponse.json({error:"no_journey_tasks"},{status:409});
     const candidates=taskRows.results.slice(0,slots);
-    await db.batch(candidates.map((item)=>db.prepare("INSERT INTO monthly_outcomes (id,user_id,title,acceptance_criteria,progress,expected_hours,status,journey_id,kind,period,source_task_id) VALUES (?,?,?,?,0,?,'active',?,'milestone',?,?)").bind(crypto.randomUUID(),identity.userId,item.title,item.acceptance_criteria,Math.max(1,Math.ceil(item.estimated_minutes/60)),item.journey_id,periods.month,item.id)));
+    const activeDays=remainingPlanningDays(periods.localDate,profile?.protected_day||"周日");
+    await db.batch(candidates.map((item)=>{const daily=item.execution_frequency==="daily";return db.prepare("INSERT INTO monthly_outcomes (id,user_id,title,acceptance_criteria,progress,expected_hours,status,journey_id,kind,period,source_task_id) VALUES (?,?,?,?,0,?,'active',?,?,?,?,?)").bind(crypto.randomUUID(),identity.userId,daily?`每日｜${item.title}`:item.title,daily?`本月剩余时间完成 ${activeDays} 次；每次标准：${item.acceptance_criteria}`:item.acceptance_criteria,Math.max(1,Math.ceil(item.estimated_minutes*(daily?activeDays:1)/60)),item.journey_id,daily?"habit":"milestone",periods.month,item.id)}));
   } else if (body.action === "settle-month") {
     if(Number(periods.localDate.slice(8,10))<25)return NextResponse.json({error:"month_not_ready"},{status:409});
     const rows=await db.prepare("SELECT * FROM monthly_outcomes WHERE user_id=? AND period=? AND status='active'").bind(identity.userId,periods.month).all<{id:string;title:string;acceptance_criteria:string;progress:number;expected_hours:number;journey_id:string;kind:string}>();
@@ -438,7 +394,8 @@ export async function POST(request: Request) {
   } else if (body.action === "delete-outcome" && typeof body.id === "string") {
     await db.batch([db.prepare("UPDATE weekly_actions SET outcome_id='' WHERE user_id=? AND outcome_id=?").bind(identity.userId,body.id),db.prepare("DELETE FROM monthly_outcomes WHERE id=? AND user_id=?").bind(body.id,identity.userId)]);
   } else if (body.action === "add-weekly-action" || body.action === "update-weekly-action") {
-    let title = clean(body.title, 120), outcomeId = clean(body.outcomeId, 100), scheduledFor = clean(body.scheduledFor, 12) || "本周",sourceTaskId=clean(body.sourceTaskId,100);
+    let title = clean(body.title, 120), outcomeId = clean(body.outcomeId, 100);
+    const scheduledFor = clean(body.scheduledFor, 12) || "本周",sourceTaskId=clean(body.sourceTaskId,100);
     const minutes = Math.max(15, Math.min(600, Number(body.estimatedMinutes) || 30)), taskType = clean(body.taskType, 20), isSideHustle = body.isSideHustle ? 1 : 0;
     if(body.action==="add-weekly-action"){
       const source=await db.prepare("SELECT title,task_type,journey_id FROM journey_tasks WHERE id=? AND user_id=? AND status='pending'").bind(sourceTaskId,identity.userId).first<{title:string;task_type:string;journey_id:string}>();
@@ -463,7 +420,7 @@ export async function POST(request: Request) {
   } else if (body.action === "generate-week-plan") {
     const [profile, taskRows, latestReview] = await Promise.all([
       db.prepare("SELECT vision, weekly_capacity_minutes, weekly_goal,side_hustle_limit_minutes,protected_day FROM profiles WHERE user_id = ?").bind(identity.userId).first<{ vision: string; weekly_capacity_minutes: number; weekly_goal: string;side_hustle_limit_minutes:number;protected_day:string }>(),
-      db.prepare("SELECT t.id,t.journey_id,j.title AS journey_title,j.area,t.title,t.acceptance_criteria,t.estimated_minutes,t.task_type,t.priority FROM journey_tasks t JOIN journeys j ON j.id=t.journey_id WHERE t.user_id=? AND t.status='pending' AND j.status='active' AND j.deleted_at IS NULL AND t.id NOT IN (SELECT source_task_id FROM weekly_actions WHERE user_id=? AND cycle_id=? AND status IN ('pending','completed')) ORDER BY j.sequence_number,t.priority LIMIT 40").bind(identity.userId,identity.userId,activeCycleId).all<JourneyTaskCandidate>(),
+      db.prepare("SELECT t.id,t.journey_id,j.title AS journey_title,j.area,t.title,t.acceptance_criteria,t.estimated_minutes,t.task_type,t.execution_frequency,t.priority FROM journey_tasks t JOIN journeys j ON j.id=t.journey_id WHERE t.user_id=? AND t.status='pending' AND j.status='active' AND j.deleted_at IS NULL AND (t.execution_frequency='daily' OR t.id NOT IN (SELECT source_task_id FROM weekly_actions WHERE user_id=? AND cycle_id=? AND status IN ('pending','completed'))) ORDER BY CASE WHEN t.execution_frequency='daily' THEN 0 ELSE 1 END,j.sequence_number,t.priority LIMIT 40").bind(identity.userId,identity.userId,activeCycleId).all<JourneyTaskCandidate>(),
       db.prepare("SELECT health_check,energy_score,decision,auto_decision,kill_rule_count,next_priority FROM reviews WHERE user_id=? ORDER BY created_at DESC LIMIT 1").bind(identity.userId).first<{health_check:string;energy_score:number;decision:string;auto_decision:string;kill_rule_count:number;next_priority:string}>(),
     ]);
     const goal = clean(body.goal, 500) || profile?.weekly_goal || "推进最重要的人生目标";
@@ -476,13 +433,15 @@ export async function POST(request: Request) {
     const reviewContext = latestReview ? `能量${latestReview.energy_score}/10；健康：${latestReview.health_check || "未填写"}；用户决定：${latestReview.decision}；系统判断：${latestReview.auto_decision}；停止规则触发${latestReview.kill_rule_count}条；下周重点：${latestReview.next_priority}` : "";
     if(!taskRows.results.length)return NextResponse.json({error:"no_journey_tasks"},{status:409});
     const plan = await selectWeekTasks(goal, capacity, taskRows.results, protectedDay, sideHustleLimit, reviewContext);
-    if(!plan.length)return NextResponse.json({error:"no_tasks_fit_capacity"},{status:409});
+    const completedDaily=new Set((await db.prepare("SELECT source_task_id,scheduled_for FROM weekly_actions WHERE user_id=? AND cycle_id=? AND status='completed' AND source_task_id!=''").bind(identity.userId,activeCycleId).all<{source_task_id:string;scheduled_for:string}>()).results.map((item)=>`${item.source_task_id}:${item.scheduled_for}`));
+    const freshPlan=plan.filter((item)=>!completedDaily.has(`${item.sourceTaskId}:${item.day}`));
+    if(!freshPlan.length)return NextResponse.json({error:"no_tasks_fit_capacity"},{status:409});
     await db.prepare("UPDATE weekly_actions SET status = 'paused' WHERE user_id = ? AND cycle_id=? AND status = 'pending'").bind(identity.userId,activeCycleId).run();
     const maxPriority = await db.prepare("SELECT COALESCE(MAX(priority),0) AS value FROM weekly_actions WHERE user_id = ? AND cycle_id=?").bind(identity.userId,activeCycleId).first<{ value: number }>();
     const outcomeByTask=new Map((await db.prepare("SELECT id,source_task_id,journey_id FROM monthly_outcomes WHERE user_id=? AND status='active' AND period=?").bind(identity.userId,periods.month).all<{id:string;source_task_id:string;journey_id:string}>()).results.map((item)=>[item.source_task_id,item.id]));
     const taskJourney=new Map(taskRows.results.map((item)=>[item.id,item.journey_id]));
     const outcomeByJourney=new Map((await db.prepare("SELECT id,journey_id FROM monthly_outcomes WHERE user_id=? AND status='active' AND period=? ORDER BY rowid").bind(identity.userId,periods.month).all<{id:string;journey_id:string}>()).results.map((item)=>[item.journey_id,item.id]));
-    await db.batch(plan.map((item, index) => db.prepare("INSERT INTO weekly_actions (id,user_id,outcome_id,title,estimated_minutes,scheduled_for,priority,status,task_type,source,is_side_hustle,cycle_id,source_task_id) VALUES (?,?,?,?,?,?,?,'pending',?,'ai',?,?,?)").bind(crypto.randomUUID(), identity.userId, outcomeByTask.get(item.sourceTaskId)||outcomeByJourney.get(taskJourney.get(item.sourceTaskId)||"")||"", item.title, item.minutes, item.day, (maxPriority?.value ?? 0) + index + 1, item.type, item.sideHustle ? 1 : 0,activeCycleId,item.sourceTaskId)));
+    await db.batch(freshPlan.map((item, index) => db.prepare("INSERT INTO weekly_actions (id,user_id,outcome_id,title,estimated_minutes,scheduled_for,priority,status,task_type,source,is_side_hustle,cycle_id,source_task_id) VALUES (?,?,?,?,?,?,?,'pending',?,'ai',?,?,?)").bind(crypto.randomUUID(), identity.userId, outcomeByTask.get(item.sourceTaskId)||outcomeByJourney.get(taskJourney.get(item.sourceTaskId)||"")||"", item.title, item.minutes, item.day, (maxPriority?.value ?? 0) + index + 1, item.type, item.sideHustle ? 1 : 0,activeCycleId,item.sourceTaskId)));
     await db.prepare("UPDATE profiles SET weekly_capacity_minutes = ?, weekly_goal = ?,side_hustle_limit_minutes=?,protected_day=?, updated_at = ? WHERE user_id = ?").bind(requestedCapacity, goal,configuredSideLimit,protectedDay, now, identity.userId).run();
   } else if (body.action === "checkin" && (body.type === "exercise" || body.type === "english" || body.type === "reading")) {
     const note = clean(body.note, 3000);

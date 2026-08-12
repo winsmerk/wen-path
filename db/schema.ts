@@ -47,6 +47,7 @@ export const journeyTasks = sqliteTable(
     acceptanceCriteria: text("acceptance_criteria").notNull(),
     estimatedMinutes: integer("estimated_minutes").notNull().default(60),
     taskType: text("task_type").notNull().default("general"),
+    executionFrequency: text("execution_frequency").notNull().default("monthly"),
     priority: integer("priority").notNull().default(1),
     status: text("status").notNull().default("pending"),
     source: text("source").notNull().default("manual"),

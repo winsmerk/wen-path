@@ -77,6 +77,7 @@ export async function ensureSchema(db: D1Database) {
       id TEXT PRIMARY KEY, user_id TEXT NOT NULL, journey_id TEXT NOT NULL,
       title TEXT NOT NULL, acceptance_criteria TEXT NOT NULL,
       estimated_minutes INTEGER NOT NULL DEFAULT 60, task_type TEXT NOT NULL DEFAULT 'general',
+      execution_frequency TEXT NOT NULL DEFAULT 'monthly',
       priority INTEGER NOT NULL DEFAULT 1, status TEXT NOT NULL DEFAULT 'pending',
       source TEXT NOT NULL DEFAULT 'manual', completed_at TEXT,
       created_at TEXT NOT NULL, updated_at TEXT NOT NULL
@@ -166,6 +167,8 @@ export async function ensureSchema(db: D1Database) {
   if (!journeyColumns.results.some((column) => column.name === "evidence_review_status")) await db.prepare("ALTER TABLE journeys ADD COLUMN evidence_review_status TEXT NOT NULL DEFAULT ''").run();
   if (!journeyColumns.results.some((column) => column.name === "evidence_review_feedback")) await db.prepare("ALTER TABLE journeys ADD COLUMN evidence_review_feedback TEXT NOT NULL DEFAULT ''").run();
   if (!journeyColumns.results.some((column) => column.name === "evidence_score")) await db.prepare("ALTER TABLE journeys ADD COLUMN evidence_score INTEGER NOT NULL DEFAULT 0").run();
+  const journeyTaskColumns = await db.prepare("PRAGMA table_info(journey_tasks)").all<{ name: string }>();
+  if (!journeyTaskColumns.results.some((column) => column.name === "execution_frequency")) await db.prepare("ALTER TABLE journey_tasks ADD COLUMN execution_frequency TEXT NOT NULL DEFAULT 'monthly'").run();
 
   const profileColumns = await db.prepare("PRAGMA table_info(profiles)").all<{ name: string }>();
   if (!profileColumns.results.some((column) => column.name === "weekly_capacity_minutes")) {
