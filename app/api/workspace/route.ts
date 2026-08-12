@@ -136,9 +136,34 @@ async function reviewJourneyEvidence(title:string,criteria:string,evidence:strin
     const parsed=JSON.parse(answer.replace(/^```json\s*|\s*```$/g,"")) as {status?:string;score?:number;feedback?:string};
     const score=Math.max(0,Math.min(100,Number(parsed.score)||0));
     const status=parsed.status==="passed"&&score>=70?"passed":"needs_more";
-    return {status,score,feedback:clean(parsed.feedback,1000)|| (status==="passed"?"证据与验收标准一致。":"证据还不足以证明完成，请补充可验证结果。")};
+    return {status,score,mode:"ai",feedback:clean(parsed.feedback,1000)|| (status==="passed"?"AI验收通过：证据与验收标准一致。":"AI验收待补充：证据还不足以证明完成，请补充可验证结果。")};
   } catch { /* conservative fallback below */ }
-  return {status:"needs_more",score:0,feedback:"AI验收暂时不可用，征程不会被自动完成。请稍后重新提交证据。"};
+  return reviewEvidenceLocally(criteria,evidence);
+}
+
+function reviewEvidenceLocally(criteria:string,evidence:string) {
+  const normalized=evidence.replace(/\s+/g," ").trim();
+  const lengthScore=Math.min(25,Math.floor(normalized.length/3));
+  const hasCompletion=/完成|已做|已经|达成|通过|提交|发布|输出|记录|坚持|实现|获得|整理|复盘/.test(normalized);
+  const hasResult=/笔记|链接|文档|截图|照片|数据|记录|报告|作品|证书|反馈|清单|页面|文件|成果|时长|金额|次数|日期/.test(normalized);
+  const hasMeasure=/\d+(?:\.\d+)?\s*(?:次|天|周|月|小时|分钟|页|篇|字|元|万|%|公里|kg|本)?|https?:\/\/|20\d{2}[-/.年]\d{1,2}/i.test(normalized);
+  const criteriaTerms=[...new Set(criteria.match(/[\u4e00-\u9fff]{2,6}/g)??[])].filter((term)=>!/^(完成|达到|进行|一次|能够|相关|需要|并且|以及)$/.test(term));
+  const overlap=criteriaTerms.slice(0,12).filter((term)=>normalized.includes(term)||[...term].filter((char)=>normalized.includes(char)).length>=Math.min(3,term.length)).length;
+  const score=Math.min(88,25+lengthScore+(hasCompletion?15:0)+(hasResult?13:0)+(hasMeasure?10:0)+Math.min(10,overlap*2));
+  const missing:string[]=[];
+  if(normalized.length<20)missing.push("更完整地描述做了什么和最终结果");
+  if(!hasCompletion)missing.push("明确说明已经完成的行动");
+  if(!hasResult)missing.push("补充笔记、链接、截图、数据或其他成果形式");
+  if(!hasMeasure)missing.push("补充日期、次数、时长或可核验链接");
+  const status=score>=70?"passed":"needs_more";
+  return {
+    status,
+    score,
+    mode:"rules",
+    feedback:status==="passed"
+      ?"智能规则验收通过：证据包含明确行动、结果和可核验信息。AI服务恢复后仍可再次复核。"
+      :`智能规则验收待补充：${missing.slice(0,2).join("；")||"请补充与验收标准直接对应的可核验结果"}。`,
+  };
 }
 
 function noMarketEvidence(value:string){return /^(暂无|没有|无|本周没有|0)$/i.test(value.trim())||/没有.{0,6}(反馈|用户|收入|证据)|暂无.{0,6}(反馈|用户|收入|证据)/.test(value);}
@@ -393,10 +418,11 @@ export async function POST(request: Request) {
     const review=await reviewJourneyEvidence(journey.title,journey.acceptance_criteria,evidence);
     if(review.status!=="passed"){
       await db.prepare("UPDATE journeys SET evidence=?,evidence_review_status='needs_more',evidence_review_feedback=?,evidence_score=? WHERE id=? AND user_id=?").bind(evidence,review.feedback,review.score,body.id,identity.userId).run();
-      return NextResponse.json({ok:false,error:"evidence_needs_more",feedback:review.feedback,score:review.score},{status:422});
+      return NextResponse.json({ok:false,error:"evidence_needs_more",feedback:review.feedback,score:review.score,reviewMode:review.mode},{status:422});
     }
     await db.prepare("UPDATE journeys SET status='completed',progress=100,evidence=?,completed_at=?,evidence_review_status='passed',evidence_review_feedback=?,evidence_score=? WHERE id=? AND user_id=?").bind(evidence,now,review.feedback,review.score,body.id,identity.userId).run();
     await activateNextEligibleJourney(db,identity.userId);
+    return NextResponse.json({ok:true,reviewMode:review.mode,score:review.score,feedback:review.feedback});
   } else if (body.action === "update-journey" && typeof body.id === "string") {
     const title = clean(body.title, 80), area = clean(body.area, 30), acceptance = clean(body.acceptanceCriteria, 300), nextAction = clean(body.nextAction, 160);
     if (!title || !area || !acceptance || !nextAction) return NextResponse.json({ error: "missing_fields" }, { status: 400 });

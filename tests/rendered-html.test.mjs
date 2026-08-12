@@ -68,6 +68,8 @@ test("ships product metadata, adaptive planning, and database declaration", asyn
   assert.match(workspaceApi, /generate-month-outcomes/);
   assert.match(workspaceApi, /settle-month/);
   assert.match(workspaceApi, /reviewJourneyEvidence/);
+  assert.match(workspaceApi, /reviewEvidenceLocally/);
+  assert.match(workspaceApi, /智能规则验收通过/);
   assert.match(workspaceApi, /evaluateStopRules/);
   assert.match(workspaceApi, /evidence_events/);
   assert.match(lifeOS, /历史周计划/);
