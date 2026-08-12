@@ -70,6 +70,8 @@ type FinancialMonthlyBill={id:string;period:string;income_total:number;salary_in
 type EnglishMessage = { id: string; role: "user" | "assistant"; text: string; feedback: string; created_at: string };
 type Footprint = { id: string; name: string; status: "visited" | "wishlist"; content: string; visited_at: string | null; latitude: number | null; longitude: number | null; geometry_json: string | null; geometry_version: number; created_at: string; updated_at: string };
 type FootprintImage = { id: string; footprint_id: string };
+type JournalEntry = { id: string; type: "diary" | "inspiration"; title: string; content: string; recorded_at: string; created_at: string; updated_at: string };
+type JournalImage = { id: string; journal_id: string };
 
 type Checkin = {
   id: string;
@@ -113,6 +115,8 @@ type Workspace = {
   englishMessages: EnglishMessage[];
   footprints: Footprint[];
   footprintImages: FootprintImage[];
+  journalEntries: JournalEntry[];
+  journalImages: JournalImage[];
   stopRuleEvents:Array<{id:string;week_start:string;rule_code:string;severity:"adjust"|"stop";reason:string;created_at:string}>;
 };
 
@@ -271,7 +275,7 @@ export default function LifeOS() {
         {tab === "vision" && <Vision profile={workspace.profile} journeys={workspace.journeys} actions={workspace.actions} busy={saving} mutate={mutate} />}
         {tab === "journeys" && <Journeys items={workspace.journeys} tasks={workspace.journeyTasks} busy={saving} mutate={mutate} />}
         {tab === "plan" && <Plan profile={workspace.profile} journeys={workspace.journeys} journeyTasks={workspace.journeyTasks} outcomes={workspace.outcomes} outcomeHistory={workspace.outcomeHistory} activeWeek={workspace.activeWeek} weeklyCycles={workspace.weeklyCycles} actions={workspace.actions} historyActions={workspace.historyActions} reviews={workspace.reviews} busy={saving} mutate={mutate} onComplete={setCompletingAction} />}
-        {tab === "records" && <Records items={workspace.checkins} outputs={workspace.taskOutputs} messages={workspace.englishMessages} busy={saving} onCheckin={setCheckinType} mutate={mutate} />}
+        {tab === "records" && <Records items={workspace.checkins} outputs={workspace.taskOutputs} messages={workspace.englishMessages} journals={workspace.journalEntries} journalImages={workspace.journalImages} busy={saving} onCheckin={setCheckinType} mutate={mutate} onReload={load} />}
         {tab === "finance" && <Finance records={workspace.financialRecords} bills={workspace.financialMonthlyBills} actions={workspace.actions} busy={saving} mutate={mutate} />}
         {tab === "footprints" && <Footprints items={workspace.footprints} images={workspace.footprintImages} onReload={load} />}
         {tab === "review" && (
@@ -568,19 +572,50 @@ function ExecutionHistory({cycles,actions,outcomes,busy,mutate}:{cycles:WeeklyCy
 
 function taskTypeLabel(type: Action["task_type"]) { return { reading: "阅读", finance: "财务", exercise: "运动", english: "英语", general: "通用" }[type]; }
 
-function Records({ items, outputs, messages, busy, onCheckin, mutate }: { items: Checkin[]; outputs: TaskOutput[]; messages: EnglishMessage[]; busy: boolean; onCheckin: (type: Checkin["type"]) => void; mutate: (payload: Record<string, unknown>, success?: string) => Promise<boolean> }) {
+type RecordFilter = "all" | "reading" | "exercise" | "english" | "finance" | "general" | "diary" | "inspiration";
+
+function Records({ items, outputs, messages, journals, journalImages, busy, onCheckin, mutate, onReload }: { items: Checkin[]; outputs: TaskOutput[]; messages: EnglishMessage[]; journals: JournalEntry[]; journalImages: JournalImage[]; busy: boolean; onCheckin: (type: Checkin["type"]) => void; mutate: (payload: Record<string, unknown>, success?: string) => Promise<boolean>; onReload: () => Promise<void> }) {
+  const [filter, setFilter] = useState<RecordFilter>("all");
+  const [editingJournal, setEditingJournal] = useState<JournalEntry | "diary" | "inspiration" | null>(null);
+  const visibleCheckins = filter === "all" ? items : items.filter((item) => item.type === filter);
+  const visibleOutputs = filter === "all" ? outputs : outputs.filter((item) => item.task_type === filter);
+  const visibleJournals = filter === "all" ? journals : journals.filter((item) => item.type === filter);
+  const hasRecords = visibleCheckins.length + visibleOutputs.length + visibleJournals.length > 0;
+  const filters: Array<[RecordFilter, string]> = [["all", "全部"], ["reading", "读书"], ["english", "英语"], ["exercise", "运动"], ["finance", "财务"], ["general", "通用"], ["diary", "日记"], ["inspiration", "灵感"]];
   return <>
-    <PageHeader kicker="行动留下痕迹" title="记录"><div className="action-row"><button className="soft-button" onClick={() => onCheckin("reading")}>＋ 读书</button><button className="soft-button" onClick={() => onCheckin("exercise")}>＋ 运动</button><button className="soft-button" onClick={() => onCheckin("english")}>＋ 英语</button></div></PageHeader>
-    <div className="record-summary"><article><span className="quick-icon reading">书</span><div><small>本月读书</small><b>{items.filter((item) => item.type === "reading").length} <em>篇笔记</em></b></div></article><article><span className="quick-icon exercise">↗</span><div><small>本月运动</small><b>{items.filter((item) => item.type === "exercise").length} <em>/ 12次</em></b></div></article><article><span className="quick-icon english">Aa</span><div><small>本月英语</small><b>{items.filter((item) => item.type === "english").length} <em>/ 12次</em></b></div></article><article><span className="quick-icon finance">¥</span><div><small>财务基线</small><b>25% <em>已完成</em></b></div></article></div>
-    <section className="record-list"><div className="section-heading"><div><span className="eyebrow">最近记录</span><h3>每一次行动都在形成证据</h3></div></div>{items.length ? items.map((item) => <article key={item.id}><span className={`record-mark ${item.type}`}>{item.type === "exercise" ? "↗" : item.type === "reading" ? "书" : "Aa"}</span><div><b>{item.type === "exercise" ? "完成一次运动" : item.type === "reading" ? "提交一篇读书笔记" : "提交一篇英语学习笔记"}</b><p>{item.note || "只记录完成，不给今天增加负担"}</p></div><span><b>{item.duration}分钟</b><small>{new Date(item.created_at).toLocaleDateString("zh-CN")}</small></span></article>) : <div className="empty-list"><b>还没有记录</b><p>今天完成后，留下第一条行动证据。</p></div>}</section>
-    <TaskOutputList outputs={outputs} />
-    <EnglishCoach messages={messages} busy={busy} mutate={mutate} />
+    <PageHeader kicker="行动留下痕迹" title="记录"><div className="action-row"><button className="soft-button" onClick={() => onCheckin("reading")}>＋ 读书</button><button className="soft-button" onClick={() => onCheckin("exercise")}>＋ 运动</button><button className="soft-button" onClick={() => onCheckin("english")}>＋ 英语</button><button className="soft-button" onClick={() => setEditingJournal("diary")}>＋ 写日记</button><button className="primary-button" onClick={() => setEditingJournal("inspiration")}>＋ 记灵感</button></div></PageHeader>
+    <div className="record-summary"><article><span className="quick-icon reading">书</span><div><small>本月读书</small><b>{items.filter((item) => item.type === "reading").length} <em>篇笔记</em></b></div></article><article><span className="quick-icon exercise">↗</span><div><small>本月运动</small><b>{items.filter((item) => item.type === "exercise").length} <em>/ 12次</em></b></div></article><article><span className="quick-icon english">Aa</span><div><small>本月英语</small><b>{items.filter((item) => item.type === "english").length} <em>/ 12次</em></b></div></article><article><span className="quick-icon diary">记</span><div><small>日记与灵感</small><b>{journals.length} <em>条记录</em></b></div></article></div>
+    <div className="filter-row record-filters" aria-label="记录模块筛选">{filters.map(([key, label]) => <button key={key} className={filter === key ? "active" : ""} onClick={() => setFilter(key)}>{label}</button>)}</div>
+    {!hasRecords && <section className="record-list"><div className="empty-list"><b>这个模块还没有记录</b><p>留下第一条行动、日记或灵感。</p></div></section>}
+    {visibleJournals.length > 0 && <section className="record-list journal-list"><div className="section-heading"><div><span className="eyebrow">生活记录</span><h3>日记与灵感</h3></div></div>{visibleJournals.map((item) => { const images = journalImages.filter((image) => image.journal_id === item.id); return <article key={item.id} className="journal-record"><span className={`record-mark ${item.type}`}>{item.type === "diary" ? "记" : "✦"}</span><div><div className="journal-title-row"><b>{item.title}</b><button className="text-button" onClick={() => setEditingJournal(item)}>编辑</button></div><p>{item.content}</p>{images.length > 0 && <div className="journal-gallery">{images.map((image) => <img key={image.id} src={`/api/journal-image/${image.id}`} alt={`${item.title}配图`} loading="lazy" />)}</div>}</div><span><b>{item.type === "diary" ? "日记" : "灵感"}</b><small>{new Date(`${item.recorded_at}T00:00:00`).toLocaleDateString("zh-CN")}</small></span></article>; })}</section>}
+    {visibleCheckins.length > 0 && <section className="record-list"><div className="section-heading"><div><span className="eyebrow">行动记录</span><h3>每一次行动都在形成证据</h3></div></div>{visibleCheckins.map((item) => <article key={item.id}><span className={`record-mark ${item.type}`}>{item.type === "exercise" ? "↗" : item.type === "reading" ? "书" : "Aa"}</span><div><b>{item.type === "exercise" ? "完成一次运动" : item.type === "reading" ? "提交一篇读书笔记" : "提交一篇英语学习笔记"}</b><p>{item.note || "只记录完成，不给今天增加负担"}</p></div><span><b>{item.duration}分钟</b><small>{new Date(item.created_at).toLocaleDateString("zh-CN")}</small></span></article>)}</section>}
+    <TaskOutputList outputs={visibleOutputs} />
+    {(filter === "all" || filter === "english") && <EnglishCoach messages={messages} busy={busy} mutate={mutate} />}
+    {editingJournal && <JournalDialog item={typeof editingJournal === "object" ? editingJournal : undefined} defaultType={typeof editingJournal === "string" ? editingJournal : undefined} onClose={() => setEditingJournal(null)} onSaved={async () => { setEditingJournal(null); await onReload(); }} />}
   </>;
 }
 
 function TaskOutputList({ outputs }: { outputs: TaskOutput[] }) {
   if (!outputs.length) return null;
   return <section className="record-list output-list"><div className="section-heading"><div><span className="eyebrow">任务成果</span><h3>完成不只是打勾</h3></div></div>{outputs.slice(0, 12).map((item) => <article key={item.id}><span className={`record-mark ${item.task_type}`}>{item.task_type === "reading" ? "书" : item.task_type === "finance" ? "¥" : item.task_type === "exercise" ? "↗" : item.task_type === "english" ? "Aa" : "✓"}</span><div><b>{item.title}</b><p>{item.content || item.feeling || "已记录完成成果"}</p></div><span><b>{taskTypeLabel(item.task_type)}</b><small>{new Date(item.created_at).toLocaleDateString("zh-CN")}</small></span></article>)}</section>;
+}
+
+function JournalDialog({ item, defaultType = "diary", onClose, onSaved }: { item?: JournalEntry; defaultType?: "diary" | "inspiration"; onClose: () => void; onSaved: () => Promise<void> }) {
+  const [type, setType] = useState<"diary" | "inspiration">(item?.type ?? defaultType);
+  const [title, setTitle] = useState(item?.title ?? "");
+  const [content, setContent] = useState(item?.content ?? "");
+  const [recordedAt, setRecordedAt] = useState(item?.recorded_at ?? new Date().toISOString().slice(0, 10));
+  const [files, setFiles] = useState<File[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  async function submit(event: FormEvent) {
+    event.preventDefault(); setBusy(true);
+    const form = new FormData(); if (item) form.append("id", item.id); form.append("type", type); form.append("title", title); form.append("content", content); form.append("recordedAt", recordedAt); files.forEach((file) => form.append("images", file));
+    const response = await fetch("/api/journal", { method: "POST", body: form }); setBusy(false); if (response.ok) await onSaved();
+  }
+  async function remove() { if (!item) return; setBusy(true); const response = await fetch(`/api/journal?id=${encodeURIComponent(item.id)}`, { method: "DELETE" }); setBusy(false); if (response.ok) await onSaved(); }
+  // eslint-disable-next-line jsx-a11y/label-has-associated-control
+  return <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><form className="dialog journal-dialog" onSubmit={submit}><button type="button" className="dialog-close" onClick={onClose}>×</button><span className="eyebrow">生活记录</span><h2>{item ? "编辑记录" : type === "diary" ? "写一篇日记" : "记下灵感"}</h2><label><span>记录类型</span><div className="duration-row"><button type="button" className={type === "diary" ? "active" : ""} onClick={() => setType("diary")}>日记</button><button type="button" className={type === "inspiration" ? "active" : ""} onClick={() => setType("inspiration")}>灵感</button></div></label><label><span>标题</span><input required maxLength={120} value={title} onChange={(event) => setTitle(event.target.value)} placeholder={type === "diary" ? "今天发生了什么？" : "一句话概括这个想法"} /></label><label><span>日期</span><input type="date" required value={recordedAt} onChange={(event) => setRecordedAt(event.target.value)} /></label><label><span>内容</span><textarea required value={content} onChange={(event) => setContent(event.target.value)} placeholder={type === "diary" ? "写下感受、事件或今天想记住的事…" : "先捕捉下来，之后再慢慢完善…"} /></label><label><span>上传图片（最多6张，每张不超过8MB）</span><input className="file-input" type="file" accept="image/*" multiple onChange={(event) => setFiles(Array.from(event.target.files ?? []).slice(0, 6))} />{files.length > 0 && <small className="file-note">已选择 {files.length} 张图片</small>}</label><div className="dialog-actions">{item ? <button type="button" className={confirmDelete ? "danger-button confirm" : "danger-button"} disabled={busy} onClick={() => confirmDelete ? remove() : setConfirmDelete(true)}>{confirmDelete ? "再次点击确认删除" : "删除记录"}</button> : <span />}<button className="primary-button" disabled={busy || !title.trim() || !content.trim()}>{busy ? "正在保存…" : "保存记录"}</button></div></form></div>;
 }
 
 function EnglishCoach({ messages, busy, mutate }: { messages: EnglishMessage[]; busy: boolean; mutate: (payload: Record<string, unknown>, success?: string) => Promise<boolean> }) {

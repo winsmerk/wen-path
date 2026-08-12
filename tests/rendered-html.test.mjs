@@ -26,11 +26,13 @@ test("renders the LifeOS application shell", async () => {
 
 test("ships product metadata, adaptive planning, and database declaration", async () => {
   const { readFile } = await import("node:fs/promises");
-  const [layout, page, lifeOS, workspaceApi, visionJourneys, hosting] = await Promise.all([
+  const [layout, page, lifeOS, workspaceApi, journalApi, schema, visionJourneys, hosting] = await Promise.all([
     readFile(new URL("app/layout.tsx", templateRoot), "utf8"),
     readFile(new URL("app/page.tsx", templateRoot), "utf8"),
     readFile(new URL("app/LifeOS.tsx", templateRoot), "utf8"),
     readFile(new URL("app/api/workspace/route.ts", templateRoot), "utf8"),
+    readFile(new URL("app/api/journal/route.ts", templateRoot), "utf8"),
+    readFile(new URL("db/schema.ts", templateRoot), "utf8"),
     readFile(new URL("lib/vision-journeys.ts", templateRoot), "utf8"),
     readFile(new URL(".openai/hosting.json", templateRoot), "utf8"),
   ]);
@@ -63,6 +65,9 @@ test("ships product metadata, adaptive planning, and database declaration", asyn
   assert.match(lifeOS, /月底已结算/);
   assert.match(lifeOS, /投资本金/);
   assert.match(lifeOS, /本月收益（元，可为负）/);
+  assert.match(lifeOS, /写一篇日记/);
+  assert.match(lifeOS, /记下灵感/);
+  assert.match(lifeOS, /记录模块筛选/);
   assert.match(lifeOS, /journey-\$\{item\.status\}/);
   assert.match(lifeOS, /副业时间上限/);
   assert.match(workspaceApi, /征程验收标准/);
@@ -92,6 +97,11 @@ test("ships product metadata, adaptive planning, and database declaration", asyn
   assert.match(workspaceApi, /reserve_fund/);
   assert.match(workspaceApi, /settleFinancialMonths/);
   assert.match(workspaceApi, /financial_monthly_bills/);
+  assert.match(workspaceApi, /journalEntries/);
+  assert.match(journalApi, /invalid_images/);
+  assert.match(journalApi, /DELETE/);
+  assert.match(schema, /journal_entries/);
+  assert.match(schema, /journal_images/);
   assert.match(lifeOS, /历史周计划/);
   assert.match(lifeOS, /月末结算/);
   assert.equal([...visionJourneys.matchAll(/^\s+\[\d+,/gm)].length, 100);

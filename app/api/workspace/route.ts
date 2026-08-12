@@ -289,7 +289,7 @@ export async function GET() {
   await refreshProgress(db, identity.userId);
   const {month:currentPeriod,weekStart}=executionPeriods();
   await settleFinancialMonths(db,identity.userId,currentPeriod,new Date().toISOString());
-  const [profile, journeys, journeyTasks, outcomes, outcomeHistory, activeWeek, weeklyCycles, actions, historyActions, checkins, reviews, taskOutputs, financialRecords,financialMonthlyBills, englishMessages, footprints, footprintImages, stopRuleEvents] = await Promise.all([
+  const [profile, journeys, journeyTasks, outcomes, outcomeHistory, activeWeek, weeklyCycles, actions, historyActions, checkins, reviews, taskOutputs, financialRecords,financialMonthlyBills, englishMessages, footprints, footprintImages, journalEntries, journalImages, stopRuleEvents] = await Promise.all([
     db.prepare("SELECT * FROM profiles WHERE user_id = ?").bind(identity.userId).first(),
     db.prepare("SELECT * FROM journeys WHERE user_id = ? AND deleted_at IS NULL ORDER BY sequence_number").bind(identity.userId).all(),
     db.prepare("SELECT * FROM journey_tasks WHERE user_id=? ORDER BY journey_id,priority,rowid").bind(identity.userId).all(),
@@ -307,9 +307,11 @@ export async function GET() {
     db.prepare("SELECT * FROM english_messages WHERE user_id = ? ORDER BY created_at ASC LIMIT 60").bind(identity.userId).all(),
     db.prepare("SELECT * FROM footprints WHERE user_id = ? ORDER BY updated_at DESC").bind(identity.userId).all(),
     db.prepare("SELECT id, footprint_id FROM footprint_images WHERE user_id = ? ORDER BY created_at ASC").bind(identity.userId).all(),
+    db.prepare("SELECT * FROM journal_entries WHERE user_id = ? ORDER BY recorded_at DESC, updated_at DESC LIMIT 300").bind(identity.userId).all(),
+    db.prepare("SELECT id, journal_id FROM journal_images WHERE user_id = ? ORDER BY created_at ASC").bind(identity.userId).all(),
     db.prepare("SELECT * FROM stop_rule_events WHERE user_id=? ORDER BY created_at DESC LIMIT 20").bind(identity.userId).all(),
   ]);
-  return NextResponse.json({ profile, journeys: journeys.results, journeyTasks:journeyTasks.results, outcomes: outcomes.results, outcomeHistory: outcomeHistory.results, activeWeek, weeklyCycles:weeklyCycles.results, actions: actions.results, historyActions:historyActions.results, checkins: checkins.results, reviews: reviews.results, taskOutputs: taskOutputs.results, financialRecords: financialRecords.results,financialMonthlyBills:financialMonthlyBills.results, englishMessages: englishMessages.results, footprints: footprints.results, footprintImages: footprintImages.results,stopRuleEvents:stopRuleEvents.results });
+  return NextResponse.json({ profile, journeys: journeys.results, journeyTasks:journeyTasks.results, outcomes: outcomes.results, outcomeHistory: outcomeHistory.results, activeWeek, weeklyCycles:weeklyCycles.results, actions: actions.results, historyActions:historyActions.results, checkins: checkins.results, reviews: reviews.results, taskOutputs: taskOutputs.results, financialRecords: financialRecords.results,financialMonthlyBills:financialMonthlyBills.results, englishMessages: englishMessages.results, footprints: footprints.results, footprintImages: footprintImages.results, journalEntries: journalEntries.results, journalImages: journalImages.results, stopRuleEvents:stopRuleEvents.results });
 }
 
 export async function POST(request: Request) {

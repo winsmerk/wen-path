@@ -144,6 +144,15 @@ export async function ensureSchema(db: D1Database) {
       id TEXT PRIMARY KEY, footprint_id TEXT NOT NULL, user_id TEXT NOT NULL,
       object_key TEXT NOT NULL, content_type TEXT NOT NULL, created_at TEXT NOT NULL
     )`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS journal_entries (
+      id TEXT PRIMARY KEY, user_id TEXT NOT NULL, type TEXT NOT NULL,
+      title TEXT NOT NULL, content TEXT NOT NULL, recorded_at TEXT NOT NULL,
+      created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+    )`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS journal_images (
+      id TEXT PRIMARY KEY, journal_id TEXT NOT NULL, user_id TEXT NOT NULL,
+      object_key TEXT NOT NULL, content_type TEXT NOT NULL, created_at TEXT NOT NULL
+    )`),
     db.prepare(`CREATE TABLE IF NOT EXISTS evidence_events (
       id TEXT PRIMARY KEY, user_id TEXT NOT NULL, source_type TEXT NOT NULL, source_id TEXT NOT NULL,
       evidence_type TEXT NOT NULL, action_id TEXT NOT NULL DEFAULT '', occurred_at TEXT NOT NULL, created_at TEXT NOT NULL
@@ -162,6 +171,8 @@ export async function ensureSchema(db: D1Database) {
     db.prepare("CREATE INDEX IF NOT EXISTS idx_english_user_date ON english_messages(user_id, created_at)"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_footprints_user_status ON footprints(user_id, status)"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_footprint_images_footprint ON footprint_images(footprint_id, user_id)"),
+    db.prepare("CREATE INDEX IF NOT EXISTS idx_journal_entries_user_type_date ON journal_entries(user_id, type, recorded_at)"),
+    db.prepare("CREATE INDEX IF NOT EXISTS idx_journal_images_journal ON journal_images(journal_id, user_id)"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_weekly_cycles_user_start ON weekly_cycles(user_id, week_start)"),
     db.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_evidence_source ON evidence_events(user_id, source_type, source_id)"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_evidence_user_type_date ON evidence_events(user_id, evidence_type, occurred_at)"),

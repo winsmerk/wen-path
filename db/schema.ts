@@ -172,3 +172,11 @@ export const footprintImages = sqliteTable("footprint_images", {
   id: text("id").primaryKey(), footprintId: text("footprint_id").notNull(), userId: text("user_id").notNull(), objectKey: text("object_key").notNull(),
   contentType: text("content_type").notNull(), createdAt: text("created_at").notNull(),
 });
+export const journalEntries = sqliteTable("journal_entries", {
+  id: text("id").primaryKey(), userId: text("user_id").notNull(), type: text("type").notNull(), title: text("title").notNull(),
+  content: text("content").notNull(), recordedAt: text("recorded_at").notNull(), createdAt: text("created_at").notNull(), updatedAt: text("updated_at").notNull(),
+}, (table) => [index("idx_journal_entries_user_type_date").on(table.userId, table.type, table.recordedAt)]);
+export const journalImages = sqliteTable("journal_images", {
+  id: text("id").primaryKey(), journalId: text("journal_id").notNull(), userId: text("user_id").notNull(), objectKey: text("object_key").notNull(),
+  contentType: text("content_type").notNull(), createdAt: text("created_at").notNull(),
+}, (table) => [index("idx_journal_images_journal").on(table.journalId, table.userId)]);
