@@ -55,6 +55,8 @@ test("ships product metadata, adaptive planning, and database declaration", asyn
   assert.match(lifeOS, /AI 评估合理性/);
   assert.match(lifeOS, /周任务/);
   assert.match(lifeOS, /月任务/);
+  assert.match(lifeOS, /value="account_operation">账号运营/);
+  assert.match(lifeOS, /账号运营成果/);
   assert.match(lifeOS, /executionFrequency/);
   assert.match(lifeOS, /提交一篇读书笔记/);
   assert.match(lifeOS, /英语学习笔记/);
@@ -90,6 +92,7 @@ test("ships product metadata, adaptive planning, and database declaration", asyn
   assert.match(workspaceApi, /evaluate-journey-tasks/);
   assert.match(workspaceApi, /source_task_id/);
   assert.match(workspaceApi, /execution_frequency/);
+  assert.match(workspaceApi, /account_operation/);
   assert.match(workspaceApi, /remainingPlanningWeeks/);
   assert.doesNotMatch(workspaceApi, /active_limit/);
   assert.match(workspaceApi, /settle-month/);

@@ -55,11 +55,11 @@ async function generateJourneyTasks(journey:{title:string;area:string;acceptance
 已有子任务：${existing.join("；")||"暂无"}
 要求：覆盖从准备到最终验收的完整路径；不重复已有任务；每项有清晰完成标准；粒度适合在一周内推进；不要生成与征程无关的通用习惯。
 需要每周持续推进或复盘的任务设为 weekly；只需当月完成一次的交付或阶段成果设为 monthly。
-只返回JSON数组，字段 title、acceptanceCriteria、estimatedMinutes、taskType（reading、finance、exercise、english、general）、executionFrequency（weekly或monthly）。`);
+只返回JSON数组，字段 title、acceptanceCriteria、estimatedMinutes、taskType（reading、finance、exercise、english、account_operation（账号运营）、general）、executionFrequency（weekly或monthly）。`);
   if(!answer)return [];
   try {
     const parsed=JSON.parse(answer.replace(/^```json\s*|\s*```$/g,"")) as Array<{title?:string;acceptanceCriteria?:string;estimatedMinutes?:number;taskType?:string;executionFrequency?:string}>;
-    const allowed=["reading","finance","exercise","english","general"];
+    const allowed=["reading","finance","exercise","english","account_operation","general"];
     return parsed.slice(0,8).map((item)=>({title:clean(item.title,120),acceptanceCriteria:clean(item.acceptanceCriteria,500),estimatedMinutes:Math.max(15,Math.min(1200,Number(item.estimatedMinutes)||60)),taskType:allowed.includes(clean(item.taskType,20))?clean(item.taskType,20):classify(clean(item.title,120)),executionFrequency:item.executionFrequency==="weekly"?"weekly":"monthly"})).filter((item)=>item.title&&item.acceptanceCriteria&&!existing.includes(item.title));
   } catch{return [];}
 }
@@ -90,7 +90,7 @@ async function selectWeekTasks(goal:string,capacity:number,candidates:JourneyTas
     if(used+minutes>limit)continue;
     const wantsSide=/职业|收入/.test(item.area),side=wantsSide&&sideUsed+minutes<=sideHustleLimit;
     used+=minutes;if(side)sideUsed+=minutes;
-    recurring.push({title:item.title,minutes,day:days[index%days.length]||"本周",type:["reading","finance","exercise","english","general"].includes(item.task_type)?item.task_type:"general",outcomeId:"",sideHustle:side,sourceTaskId:item.id});
+    recurring.push({title:item.title,minutes,day:days[index%days.length]||"本周",type:["reading","finance","exercise","english","account_operation","general"].includes(item.task_type)?item.task_type:"general",outcomeId:"",sideHustle:side,sourceTaskId:item.id});
   }
   const monthlyCandidates=candidates.filter((item)=>item.execution_frequency!=="weekly");
   if(!monthlyCandidates.length||used>=limit)return recurring;
@@ -110,7 +110,7 @@ async function selectWeekTasks(goal:string,capacity:number,candidates:JourneyTas
     const minutes=Math.max(15,Number(item.estimated_minutes)||60),side=Boolean(pick.sideHustle)&&sideUsed+minutes<=sideHustleLimit;
     if(used+minutes>limit)return [];
     used+=minutes;if(side)sideUsed+=minutes;
-    return [{title:item.title,minutes,day:clean(pick.day,12)===protectedDay?"本周":clean(pick.day,12)||days[index%days.length]||"本周",type:["reading","finance","exercise","english","general"].includes(item.task_type)?item.task_type:"general",outcomeId:"",sideHustle:side,sourceTaskId:item.id}];
+    return [{title:item.title,minutes,day:clean(pick.day,12)===protectedDay?"本周":clean(pick.day,12)||days[index%days.length]||"本周",type:["reading","finance","exercise","english","account_operation","general"].includes(item.task_type)?item.task_type:"general",outcomeId:"",sideHustle:side,sourceTaskId:item.id}];
   });
   return [...recurring,...selectedMonthly];
 }
@@ -120,6 +120,7 @@ function classify(goal: string) {
   if (/财务|现金|固定资产|投资|房产|收入|支出|资产/.test(goal)) return "finance";
   if (/运动|健身|跑步|力量|健康/.test(goal)) return "exercise";
   if (/读书|阅读|书/.test(goal)) return "reading";
+  if (/账号|运营|内容发布|粉丝|社媒|自媒体|公众号|小红书|抖音|视频号/.test(goal)) return "account_operation";
   return "general";
 }
 
@@ -341,7 +342,7 @@ export async function POST(request: Request) {
     const task = await db.prepare("SELECT * FROM weekly_actions WHERE id = ? AND user_id = ?").bind(body.id, identity.userId).first<{ id: string; title: string; task_type: string;source_task_id:string }>();
     if (!task) return NextResponse.json({ error: "not_found" }, { status: 404 });
     const content = clean(body.content, 3000), feeling = clean(body.feeling, 600), duration = Math.max(0, Math.min(600, Number(body.duration) || 0));
-    if ((task.task_type === "reading" || task.task_type === "english") && !content) return NextResponse.json({ error: "output_required" }, { status: 400 });
+    if ((task.task_type === "reading" || task.task_type === "english" || task.task_type === "account_operation") && !content) return NextResponse.json({ error: "output_required" }, { status: 400 });
     if (task.task_type === "exercise" && (!duration || !feeling)) return NextResponse.json({ error: "output_required" }, { status: 400 });
     if (task.task_type === "finance") {
       const category = clean(body.category, 30), descriptionOnly = category === "fixed_asset" || category === "property", amount = descriptionOnly ? 0 : category==="investment"?Number(body.investmentPrincipal):Number(body.amount);
@@ -363,7 +364,7 @@ export async function POST(request: Request) {
   } else if (body.action === "add-journey-task" || body.action === "update-journey-task") {
     const journeyId=clean(body.journeyId,100),title=clean(body.title,120),acceptance=clean(body.acceptanceCriteria,500),taskType=clean(body.taskType,20),executionFrequency=clean(body.executionFrequency,20);
     const minutes=Math.max(15,Math.min(1200,Number(body.estimatedMinutes)||60));
-    if(!journeyId||!title||!acceptance||!["reading","finance","exercise","english","general"].includes(taskType)||!["weekly","monthly"].includes(executionFrequency))return NextResponse.json({error:"invalid_journey_task"},{status:400});
+    if(!journeyId||!title||!acceptance||!["reading","finance","exercise","english","account_operation","general"].includes(taskType)||!["weekly","monthly"].includes(executionFrequency))return NextResponse.json({error:"invalid_journey_task"},{status:400});
     const journey=await db.prepare("SELECT id FROM journeys WHERE id=? AND user_id=? AND deleted_at IS NULL").bind(journeyId,identity.userId).first();if(!journey)return NextResponse.json({error:"not_found"},{status:404});
     if(body.action==="add-journey-task"){const priority=await db.prepare("SELECT COALESCE(MAX(priority),0) AS value FROM journey_tasks WHERE user_id=? AND journey_id=?").bind(identity.userId,journeyId).first<{value:number}>();await db.prepare("INSERT INTO journey_tasks (id,user_id,journey_id,title,acceptance_criteria,estimated_minutes,task_type,execution_frequency,priority,status,source,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?, 'pending','manual',?,?)").bind(crypto.randomUUID(),identity.userId,journeyId,title,acceptance,minutes,taskType,executionFrequency,Number(priority?.value??0)+1,now,now).run();}
     else if(typeof body.id==="string")await db.prepare("UPDATE journey_tasks SET title=?,acceptance_criteria=?,estimated_minutes=?,task_type=?,execution_frequency=?,updated_at=? WHERE id=? AND journey_id=? AND user_id=?").bind(title,acceptance,minutes,taskType,executionFrequency,now,body.id,journeyId,identity.userId).run();
@@ -421,7 +422,7 @@ export async function POST(request: Request) {
       if(!source)return NextResponse.json({error:"invalid_source_task"},{status:400});title=source.title;
       if(!outcomeId)outcomeId=(await db.prepare("SELECT id FROM monthly_outcomes WHERE user_id=? AND status='active' AND (source_task_id=? OR journey_id=?) ORDER BY CASE WHEN source_task_id=? THEN 0 ELSE 1 END LIMIT 1").bind(identity.userId,sourceTaskId,source.journey_id,sourceTaskId).first<{id:string}>())?.id||"";
     }
-    if (!title || !["reading","finance","exercise","english","general"].includes(taskType)) return NextResponse.json({ error: "invalid_task" }, { status: 400 });
+    if (!title || !["reading","finance","exercise","english","account_operation","general"].includes(taskType)) return NextResponse.json({ error: "invalid_task" }, { status: 400 });
     if (outcomeId) { const outcome = await db.prepare("SELECT id FROM monthly_outcomes WHERE id=? AND user_id=?").bind(outcomeId,identity.userId).first(); if (!outcome) return NextResponse.json({ error: "invalid_outcome" }, { status: 400 }); }
     if (body.action === "add-weekly-action") { const priority = await db.prepare("SELECT COALESCE(MAX(priority),0) AS value FROM weekly_actions WHERE user_id=? AND cycle_id=?").bind(identity.userId,activeCycleId).first<{value:number}>(); await db.prepare("INSERT INTO weekly_actions (id,user_id,outcome_id,title,estimated_minutes,scheduled_for,priority,status,task_type,source,is_side_hustle,cycle_id,source_task_id) VALUES (?,?,?,?,?,?,?,'pending',?,'manual',?,?,?)").bind(crypto.randomUUID(),identity.userId,outcomeId,title,minutes,scheduledFor,(priority?.value??0)+1,taskType,isSideHustle,activeCycleId,sourceTaskId).run(); }
     else if (typeof body.id === "string") await db.prepare("UPDATE weekly_actions SET outcome_id=?,title=?,estimated_minutes=?,scheduled_for=?,task_type=?,source='manual',is_side_hustle=? WHERE id=? AND user_id=?").bind(outcomeId,title,minutes,scheduledFor,taskType,isSideHustle,body.id,identity.userId).run();

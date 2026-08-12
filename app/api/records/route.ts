@@ -49,7 +49,7 @@ export async function POST(request: Request) {
     const title = text(form, "title", 180), content = text(form, "content", 5000), feeling = text(form, "feeling", 1000);
     const duration = Math.max(0, Math.min(600, Number(text(form, "duration", 10)) || 0));
     const recordedAt = text(form, "recordedAt", 10);
-    if (!title || ((existing.task_type === "reading" || existing.task_type === "english") && !content) || (existing.task_type === "exercise" && (!duration || !feeling))) return NextResponse.json({ error: "output_required" }, { status: 400 });
+    if (!title || ((existing.task_type === "reading" || existing.task_type === "english" || existing.task_type === "account_operation") && !content) || (existing.task_type === "exercise" && (!duration || !feeling))) return NextResponse.json({ error: "output_required" }, { status: 400 });
     if (!/^\d{4}-\d{2}-\d{2}$/.test(recordedAt)) return NextResponse.json({ error: "invalid_date" }, { status: 400 });
     await db.prepare("UPDATE task_outputs SET title=?,content=?,duration=?,feeling=?,created_at=? WHERE id=? AND user_id=?")
       .bind(title, content, duration, feeling, `${recordedAt}T12:00:00.000Z`, id, identity.userId).run();
