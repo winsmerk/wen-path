@@ -89,8 +89,10 @@ test("ships product metadata, adaptive planning, and database declaration", asyn
   assert.match(workspaceApi, /is_side_hustle/);
   assert.match(workspaceApi, /kill_rule_count/);
   assert.match(workspaceApi, /generate-month-outcomes/);
-  assert.match(workspaceApi, /generatedCount/);
-  assert.match(workspaceApi, /month_generated_full/);
+  assert.match(workspaceApi, /selectMonthlyCandidates/);
+  assert.match(workspaceApi, /generatedByTask/);
+  assert.match(workspaceApi, /j\.status='active'/);
+  assert.match(lifeOS, /动态规划本月/);
   assert.match(workspaceApi, /generate-journey-tasks/);
   assert.match(workspaceApi, /evaluate-journey-tasks/);
   assert.match(workspaceApi, /source_task_id/);
