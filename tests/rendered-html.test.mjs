@@ -58,6 +58,9 @@ test("ships product metadata, adaptive planning, and database declaration", asyn
   assert.match(lifeOS, /提交完成证据/);
   assert.match(lifeOS, /保存并自动判断/);
   assert.match(lifeOS, /经营利润/);
+  assert.match(lifeOS, /备用金/);
+  assert.match(lifeOS, /点击查看明细/);
+  assert.match(lifeOS, /journey-\$\{item\.status\}/);
   assert.match(lifeOS, /副业时间上限/);
   assert.match(workspaceApi, /征程验收标准/);
   assert.match(workspaceApi, /周任务已按每周一次先占用/);
@@ -83,6 +86,7 @@ test("ships product metadata, adaptive planning, and database declaration", asyn
   assert.match(workspaceApi, /智能规则验收通过/);
   assert.match(workspaceApi, /evaluateStopRules/);
   assert.match(workspaceApi, /evidence_events/);
+  assert.match(workspaceApi, /reserve_fund/);
   assert.match(lifeOS, /历史周计划/);
   assert.match(lifeOS, /月末结算/);
   assert.equal([...visionJourneys.matchAll(/^\s+\[\d+,/gm)].length, 100);
