@@ -180,3 +180,7 @@ export const journalImages = sqliteTable("journal_images", {
   id: text("id").primaryKey(), journalId: text("journal_id").notNull(), userId: text("user_id").notNull(), objectKey: text("object_key").notNull(),
   contentType: text("content_type").notNull(), createdAt: text("created_at").notNull(),
 }, (table) => [index("idx_journal_images_journal").on(table.journalId, table.userId)]);
+export const recordImages = sqliteTable("record_images", {
+  id: text("id").primaryKey(), recordType: text("record_type").notNull(), recordId: text("record_id").notNull(), userId: text("user_id").notNull(),
+  objectKey: text("object_key").notNull(), contentType: text("content_type").notNull(), createdAt: text("created_at").notNull(),
+}, (table) => [index("idx_record_images_record").on(table.userId, table.recordType, table.recordId)]);

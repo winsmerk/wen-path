@@ -72,6 +72,7 @@ type Footprint = { id: string; name: string; status: "visited" | "wishlist"; con
 type FootprintImage = { id: string; footprint_id: string };
 type JournalEntry = { id: string; type: "diary" | "inspiration"; title: string; content: string; recorded_at: string; created_at: string; updated_at: string };
 type JournalImage = { id: string; journal_id: string };
+type RecordImage = { id: string; record_type: "checkin" | "task_output"; record_id: string };
 
 type Checkin = {
   id: string;
@@ -117,6 +118,7 @@ type Workspace = {
   footprintImages: FootprintImage[];
   journalEntries: JournalEntry[];
   journalImages: JournalImage[];
+  recordImages: RecordImage[];
   stopRuleEvents:Array<{id:string;week_start:string;rule_code:string;severity:"adjust"|"stop";reason:string;created_at:string}>;
 };
 
@@ -275,7 +277,7 @@ export default function LifeOS() {
         {tab === "vision" && <Vision profile={workspace.profile} journeys={workspace.journeys} actions={workspace.actions} busy={saving} mutate={mutate} />}
         {tab === "journeys" && <Journeys items={workspace.journeys} tasks={workspace.journeyTasks} busy={saving} mutate={mutate} />}
         {tab === "plan" && <Plan profile={workspace.profile} journeys={workspace.journeys} journeyTasks={workspace.journeyTasks} outcomes={workspace.outcomes} outcomeHistory={workspace.outcomeHistory} activeWeek={workspace.activeWeek} weeklyCycles={workspace.weeklyCycles} actions={workspace.actions} historyActions={workspace.historyActions} reviews={workspace.reviews} busy={saving} mutate={mutate} onComplete={setCompletingAction} />}
-        {tab === "records" && <Records items={workspace.checkins} outputs={workspace.taskOutputs} messages={workspace.englishMessages} journals={workspace.journalEntries} journalImages={workspace.journalImages} busy={saving} onCheckin={setCheckinType} mutate={mutate} onReload={load} />}
+        {tab === "records" && <Records items={workspace.checkins} outputs={workspace.taskOutputs} messages={workspace.englishMessages} journals={workspace.journalEntries} journalImages={workspace.journalImages} recordImages={workspace.recordImages} busy={saving} onCheckin={setCheckinType} mutate={mutate} onReload={load} />}
         {tab === "finance" && <Finance records={workspace.financialRecords} bills={workspace.financialMonthlyBills} actions={workspace.actions} busy={saving} mutate={mutate} />}
         {tab === "footprints" && <Footprints items={workspace.footprints} images={workspace.footprintImages} onReload={load} />}
         {tab === "review" && (
@@ -574,9 +576,10 @@ function taskTypeLabel(type: Action["task_type"]) { return { reading: "阅读", 
 
 type RecordFilter = "all" | "reading" | "exercise" | "english" | "finance" | "general" | "diary" | "inspiration";
 
-function Records({ items, outputs, messages, journals, journalImages, busy, onCheckin, mutate, onReload }: { items: Checkin[]; outputs: TaskOutput[]; messages: EnglishMessage[]; journals: JournalEntry[]; journalImages: JournalImage[]; busy: boolean; onCheckin: (type: Checkin["type"]) => void; mutate: (payload: Record<string, unknown>, success?: string) => Promise<boolean>; onReload: () => Promise<void> }) {
+function Records({ items, outputs, messages, journals, journalImages, recordImages, busy, onCheckin, mutate, onReload }: { items: Checkin[]; outputs: TaskOutput[]; messages: EnglishMessage[]; journals: JournalEntry[]; journalImages: JournalImage[]; recordImages: RecordImage[]; busy: boolean; onCheckin: (type: Checkin["type"]) => void; mutate: (payload: Record<string, unknown>, success?: string) => Promise<boolean>; onReload: () => Promise<void> }) {
   const [filter, setFilter] = useState<RecordFilter>("all");
   const [editingJournal, setEditingJournal] = useState<JournalEntry | "diary" | "inspiration" | null>(null);
+  const [editingRecord, setEditingRecord] = useState<{ type: "checkin"; item: Checkin } | { type: "task_output"; item: TaskOutput } | null>(null);
   const visibleCheckins = filter === "all" ? items : items.filter((item) => item.type === filter);
   const visibleOutputs = filter === "all" ? outputs : outputs.filter((item) => item.task_type === filter);
   const visibleJournals = filter === "all" ? journals : journals.filter((item) => item.type === filter);
@@ -588,16 +591,45 @@ function Records({ items, outputs, messages, journals, journalImages, busy, onCh
     <div className="filter-row record-filters" aria-label="记录模块筛选">{filters.map(([key, label]) => <button key={key} className={filter === key ? "active" : ""} onClick={() => setFilter(key)}>{label}</button>)}</div>
     {!hasRecords && <section className="record-list"><div className="empty-list"><b>这个模块还没有记录</b><p>留下第一条行动、日记或灵感。</p></div></section>}
     {visibleJournals.length > 0 && <section className="record-list journal-list"><div className="section-heading"><div><span className="eyebrow">生活记录</span><h3>日记与灵感</h3></div></div>{visibleJournals.map((item) => { const images = journalImages.filter((image) => image.journal_id === item.id); return <article key={item.id} className="journal-record"><span className={`record-mark ${item.type}`}>{item.type === "diary" ? "记" : "✦"}</span><div><div className="journal-title-row"><b>{item.title}</b><button className="text-button" onClick={() => setEditingJournal(item)}>编辑</button></div><p>{item.content}</p>{images.length > 0 && <div className="journal-gallery">{images.map((image) => <img key={image.id} src={`/api/journal-image/${image.id}`} alt={`${item.title}配图`} loading="lazy" />)}</div>}</div><span><b>{item.type === "diary" ? "日记" : "灵感"}</b><small>{new Date(`${item.recorded_at}T00:00:00`).toLocaleDateString("zh-CN")}</small></span></article>; })}</section>}
-    {visibleCheckins.length > 0 && <section className="record-list"><div className="section-heading"><div><span className="eyebrow">行动记录</span><h3>每一次行动都在形成证据</h3></div></div>{visibleCheckins.map((item) => <article key={item.id}><span className={`record-mark ${item.type}`}>{item.type === "exercise" ? "↗" : item.type === "reading" ? "书" : "Aa"}</span><div><b>{item.type === "exercise" ? "完成一次运动" : item.type === "reading" ? "提交一篇读书笔记" : "提交一篇英语学习笔记"}</b><p>{item.note || "只记录完成，不给今天增加负担"}</p></div><span><b>{item.duration}分钟</b><small>{new Date(item.created_at).toLocaleDateString("zh-CN")}</small></span></article>)}</section>}
-    <TaskOutputList outputs={visibleOutputs} />
+    {visibleCheckins.length > 0 && <section className="record-list"><div className="section-heading"><div><span className="eyebrow">行动记录</span><h3>每一次行动都在形成证据</h3></div></div>{visibleCheckins.map((item) => { const images = recordImages.filter((image) => image.record_type === "checkin" && image.record_id === item.id); return <article key={item.id}><span className={`record-mark ${item.type}`}>{item.type === "exercise" ? "↗" : item.type === "reading" ? "书" : "Aa"}</span><div><div className="journal-title-row"><b>{item.type === "exercise" ? "完成一次运动" : item.type === "reading" ? "提交一篇读书笔记" : "提交一篇英语学习笔记"}</b><button className="text-button" onClick={() => setEditingRecord({ type: "checkin", item })}>编辑</button></div><p>{item.note || "只记录完成，不给今天增加负担"}</p><RecordImageGallery images={images} title="行动记录" /></div><span><b>{item.duration}分钟</b><small>{new Date(item.created_at).toLocaleDateString("zh-CN")}</small></span></article>; })}</section>}
+    <TaskOutputList outputs={visibleOutputs} images={recordImages} onEdit={(item) => setEditingRecord({ type: "task_output", item })} />
     {(filter === "all" || filter === "english") && <EnglishCoach messages={messages} busy={busy} mutate={mutate} />}
     {editingJournal && <JournalDialog item={typeof editingJournal === "object" ? editingJournal : undefined} defaultType={typeof editingJournal === "string" ? editingJournal : undefined} onClose={() => setEditingJournal(null)} onSaved={async () => { setEditingJournal(null); await onReload(); }} />}
+    {editingRecord && <RecordEditDialog record={editingRecord} imageCount={recordImages.filter((image) => image.record_type === editingRecord.type && image.record_id === editingRecord.item.id).length} onClose={() => setEditingRecord(null)} onSaved={async () => { setEditingRecord(null); await onReload(); }} />}
   </>;
 }
 
-function TaskOutputList({ outputs }: { outputs: TaskOutput[] }) {
+function RecordImageGallery({ images, title }: { images: RecordImage[]; title: string }) {
+  if (!images.length) return null;
+  return <div className="journal-gallery">{images.map((image) => <img key={image.id} src={`/api/record-image/${image.id}`} alt={`${title}配图`} loading="lazy" />)}</div>;
+}
+
+function TaskOutputList({ outputs, images, onEdit }: { outputs: TaskOutput[]; images: RecordImage[]; onEdit: (item: TaskOutput) => void }) {
   if (!outputs.length) return null;
-  return <section className="record-list output-list"><div className="section-heading"><div><span className="eyebrow">任务成果</span><h3>完成不只是打勾</h3></div></div>{outputs.slice(0, 12).map((item) => <article key={item.id}><span className={`record-mark ${item.task_type}`}>{item.task_type === "reading" ? "书" : item.task_type === "finance" ? "¥" : item.task_type === "exercise" ? "↗" : item.task_type === "english" ? "Aa" : "✓"}</span><div><b>{item.title}</b><p>{item.content || item.feeling || "已记录完成成果"}</p></div><span><b>{taskTypeLabel(item.task_type)}</b><small>{new Date(item.created_at).toLocaleDateString("zh-CN")}</small></span></article>)}</section>;
+  return <section className="record-list output-list"><div className="section-heading"><div><span className="eyebrow">任务成果</span><h3>完成不只是打勾</h3></div></div>{outputs.slice(0, 12).map((item) => <article key={item.id}><span className={`record-mark ${item.task_type}`}>{item.task_type === "reading" ? "书" : item.task_type === "finance" ? "¥" : item.task_type === "exercise" ? "↗" : item.task_type === "english" ? "Aa" : "✓"}</span><div><div className="journal-title-row"><b>{item.title}</b><button className="text-button" onClick={() => onEdit(item)}>编辑</button></div><p>{item.content || item.feeling || "已记录完成成果"}</p><RecordImageGallery images={images.filter((image) => image.record_type === "task_output" && image.record_id === item.id)} title={item.title} /></div><span><b>{taskTypeLabel(item.task_type)}</b><small>{new Date(item.created_at).toLocaleDateString("zh-CN")}</small></span></article>)}</section>;
+}
+
+function RecordEditDialog({ record, imageCount, onClose, onSaved }: { record: { type: "checkin"; item: Checkin } | { type: "task_output"; item: TaskOutput }; imageCount: number; onClose: () => void; onSaved: () => Promise<void> }) {
+  const checkin = record.type === "checkin" ? record.item : null;
+  const output = record.type === "task_output" ? record.item : null;
+  const [title, setTitle] = useState(output?.title ?? "");
+  const [content, setContent] = useState(checkin?.note ?? output?.content ?? "");
+  const [feeling, setFeeling] = useState(output?.feeling ?? "");
+  const [duration, setDuration] = useState(checkin?.duration ?? output?.duration ?? 0);
+  const [recordedAt, setRecordedAt] = useState(record.item.created_at.slice(0, 10));
+  const [files, setFiles] = useState<File[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const taskType = checkin?.type ?? output?.task_type ?? "general";
+  async function submit(event: FormEvent) {
+    event.preventDefault(); setBusy(true);
+    const form = new FormData(); form.append("recordType", record.type); form.append("id", record.item.id); form.append("title", title); form.append("note", content); form.append("content", content); form.append("feeling", feeling); form.append("duration", String(duration)); form.append("recordedAt", recordedAt); files.forEach((file) => form.append("images", file));
+    const response = await fetch("/api/records", { method: "POST", body: form }); setBusy(false); if (response.ok) await onSaved();
+  }
+  async function remove() { setBusy(true); const response = await fetch(`/api/records?recordType=${record.type}&id=${encodeURIComponent(record.item.id)}`, { method: "DELETE" }); setBusy(false); if (response.ok) await onSaved(); }
+  const contentRequired = taskType === "reading" || taskType === "english";
+  const exerciseRequired = taskType === "exercise";
+  return <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><form className="dialog journal-dialog" onSubmit={submit}><button type="button" className="dialog-close" onClick={onClose}>×</button><span className="eyebrow">{record.type === "checkin" ? "行动记录" : "任务成果"}</span><h2>编辑记录</h2>{output && <label><span>标题</span><input required value={title} onChange={(event) => setTitle(event.target.value)} /></label>}<label><span>日期</span><input type="date" required value={recordedAt} onChange={(event) => setRecordedAt(event.target.value)} /></label><label><span>{taskType === "reading" ? "读书笔记" : taskType === "english" ? "英语学习笔记" : taskType === "exercise" ? "运动记录" : "记录内容"}</span><textarea required={contentRequired} value={content} onChange={(event) => setContent(event.target.value)} /></label>{exerciseRequired && <label><span>运动感受</span><textarea required value={feeling} onChange={(event) => setFeeling(event.target.value)} /></label>}<label><span>时长（分钟）</span><input type="number" min="0" max="600" value={duration} onChange={(event) => setDuration(Number(event.target.value))} /></label><label><span>追加图片（已有 {imageCount}/6 张）</span><input className="file-input" type="file" accept="image/*" multiple disabled={imageCount >= 6} onChange={(event) => setFiles(Array.from(event.target.files ?? []).slice(0, Math.max(0, 6 - imageCount)))} />{files.length > 0 && <small className="file-note">将追加 {files.length} 张图片</small>}</label><div className="dialog-actions"><button type="button" className={confirmDelete ? "danger-button confirm" : "danger-button"} disabled={busy} onClick={() => confirmDelete ? remove() : setConfirmDelete(true)}>{confirmDelete ? "再次点击确认删除" : "删除记录"}</button><button className="primary-button" disabled={busy || (contentRequired && !content.trim()) || (exerciseRequired && (!duration || !feeling.trim()))}>{busy ? "正在保存…" : "保存修改"}</button></div></form></div>;
 }
 
 function JournalDialog({ item, defaultType = "diary", onClose, onSaved }: { item?: JournalEntry; defaultType?: "diary" | "inspiration"; onClose: () => void; onSaved: () => Promise<void> }) {
