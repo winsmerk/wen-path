@@ -385,11 +385,12 @@ export async function POST(request: Request) {
   } else if (body.action === "generate-month-outcomes") {
     const [taskRows,currentRows]=await Promise.all([
       db.prepare("SELECT t.id,t.journey_id,j.title AS journey_title,j.area,t.title,t.acceptance_criteria,t.estimated_minutes,t.task_type,t.execution_frequency,t.priority FROM journey_tasks t JOIN journeys j ON j.id=t.journey_id WHERE t.user_id=? AND t.status='pending' AND j.status='active' AND j.deleted_at IS NULL AND t.id NOT IN (SELECT source_task_id FROM monthly_outcomes WHERE user_id=? AND status='active') ORDER BY CASE WHEN t.execution_frequency='weekly' THEN 0 ELSE 1 END,j.sequence_number,t.priority LIMIT 30").bind(identity.userId,identity.userId).all<JourneyTaskCandidate>(),
-      db.prepare("SELECT title,status FROM monthly_outcomes WHERE user_id=? AND period=?").bind(identity.userId,periods.month).all<{title:string;status:string}>(),
+      db.prepare("SELECT title,status,source_task_id FROM monthly_outcomes WHERE user_id=? AND period=?").bind(identity.userId,periods.month).all<{title:string;status:string;source_task_id:string}>(),
     ]);
     if(currentRows.results.some((item)=>item.status!=="active"))return NextResponse.json({error:"month_settled"},{status:409});
-    const slots=Math.max(0,5-currentRows.results.length);
-    if(!slots)return NextResponse.json({error:"month_outcomes_full"},{status:409});
+    const generatedCount=currentRows.results.filter((item)=>item.source_task_id).length;
+    const slots=Math.max(0,5-generatedCount);
+    if(!slots)return NextResponse.json({error:"month_generated_full"},{status:409});
     if(!taskRows.results.length)return NextResponse.json({error:"no_journey_tasks"},{status:409});
     const candidates=taskRows.results.slice(0,slots);
     const activeWeeks=remainingPlanningWeeks(periods.localDate);
@@ -412,6 +413,8 @@ export async function POST(request: Request) {
     else if (typeof body.id === "string") await db.prepare("UPDATE monthly_outcomes SET title=?,acceptance_criteria=?,progress=?,expected_hours=?,journey_id=?,kind=?,period=? WHERE id=? AND user_id=?").bind(title,acceptance,progress,hours,journeyId,kind,now.slice(0,7),body.id,identity.userId).run();
     else return NextResponse.json({ error: "missing_id" }, { status: 400 });
   } else if (body.action === "delete-outcome" && typeof body.id === "string") {
+    const outcome=await db.prepare("SELECT id FROM monthly_outcomes WHERE id=? AND user_id=?").bind(body.id,identity.userId).first();
+    if(!outcome)return NextResponse.json({error:"not_found"},{status:404});
     await db.batch([db.prepare("UPDATE weekly_actions SET outcome_id='' WHERE user_id=? AND outcome_id=?").bind(identity.userId,body.id),db.prepare("DELETE FROM monthly_outcomes WHERE id=? AND user_id=?").bind(body.id,identity.userId)]);
   } else if (body.action === "add-weekly-action" || body.action === "update-weekly-action") {
     let title = clean(body.title, 120), outcomeId = clean(body.outcomeId, 100);
@@ -428,6 +431,8 @@ export async function POST(request: Request) {
     else if (typeof body.id === "string") await db.prepare("UPDATE weekly_actions SET outcome_id=?,title=?,estimated_minutes=?,scheduled_for=?,task_type=?,source='manual',is_side_hustle=? WHERE id=? AND user_id=?").bind(outcomeId,title,minutes,scheduledFor,taskType,isSideHustle,body.id,identity.userId).run();
     else return NextResponse.json({ error: "missing_id" }, { status: 400 });
   } else if (body.action === "delete-weekly-action" && typeof body.id === "string") {
+    const action=await db.prepare("SELECT id FROM weekly_actions WHERE id=? AND user_id=?").bind(body.id,identity.userId).first();
+    if(!action)return NextResponse.json({error:"not_found"},{status:404});
     await db.prepare("DELETE FROM weekly_actions WHERE id=? AND user_id=?").bind(body.id,identity.userId).run();
   } else if (body.action === "carry-action" && typeof body.id === "string") {
     const old=await db.prepare("SELECT * FROM weekly_actions WHERE id=? AND user_id=? AND cycle_id!=?").bind(body.id,identity.userId,activeCycleId).first<{id:string;outcome_id:string;title:string;estimated_minutes:number;scheduled_for:string;task_type:string;is_side_hustle:number}>();

@@ -309,6 +309,7 @@ export async function seedWorkspace(db: D1Database, identity: WorkspaceIdentity)
       (user_id, display_name, vision, target_date, initialized, created_at, updated_at)
       VALUES (?, ?, ?, ?, 0, ?, ?)`,
   ).bind(identity.userId, identity.displayName, vision40, "2034-08-11", now, now).run();
+  const profile = await db.prepare("SELECT initialized FROM profiles WHERE user_id=?").bind(identity.userId).first<{ initialized: number }>();
 
   const importMarkerId = `${identity.userId}-${visionJourneyImportId}-100`;
   const imported = await db.prepare("SELECT id FROM journeys WHERE id=? AND user_id=?").bind(importMarkerId, identity.userId).first();
@@ -341,16 +342,18 @@ export async function seedWorkspace(db: D1Database, identity: WorkspaceIdentity)
     ).bind(`${identity.userId}-${id}`, identity.userId, `${identity.userId}-${outcomeId}`, title, minutes, day, priority, taskType),
   );
 
-  await db.batch([...outcomeStatements, ...actionStatements]);
-  await db.batch([
-    db.prepare("UPDATE weekly_actions SET task_type = 'finance', source = 'seed', title = '整理现金、固定资产、投资、收入与固定支出' WHERE id = ?").bind(`${identity.userId}-a1`),
-    db.prepare("UPDATE weekly_actions SET task_type = 'english', source = 'seed' WHERE id = ? AND task_type = 'general'").bind(`${identity.userId}-a2`),
-    db.prepare("UPDATE weekly_actions SET source = 'seed' WHERE id = ?").bind(`${identity.userId}-a3`),
-    db.prepare("UPDATE weekly_actions SET task_type = 'exercise', source = 'seed' WHERE id = ? AND task_type = 'general'").bind(`${identity.userId}-a4`),
-    db.prepare("UPDATE monthly_outcomes SET journey_id=?,kind='milestone',period=? WHERE id=? AND journey_id=''").bind(`${identity.userId}-${visionJourneyImportId}-2`,currentPeriod,`${identity.userId}-finance`),
-    db.prepare("UPDATE monthly_outcomes SET journey_id=?,kind='habit',period=? WHERE id=? AND journey_id=''").bind(`${identity.userId}-${visionJourneyImportId}-5`,currentPeriod,`${identity.userId}-exercise`),
-    db.prepare("UPDATE monthly_outcomes SET journey_id=?,kind='habit',period=? WHERE id=? AND journey_id=''").bind(`${identity.userId}-${visionJourneyImportId}-7`,currentPeriod,`${identity.userId}-english`),
-    db.prepare("UPDATE monthly_outcomes SET journey_id=?,kind='milestone',period=? WHERE id=? AND journey_id=''").bind(`${identity.userId}-${visionJourneyImportId}-11`,currentPeriod,`${identity.userId}-career`),
-  ]);
+  if (!profile?.initialized) {
+    await db.batch([...outcomeStatements, ...actionStatements]);
+    await db.batch([
+      db.prepare("UPDATE weekly_actions SET task_type = 'finance', source = 'seed', title = '整理现金、固定资产、投资、收入与固定支出' WHERE id = ?").bind(`${identity.userId}-a1`),
+      db.prepare("UPDATE weekly_actions SET task_type = 'english', source = 'seed' WHERE id = ? AND task_type = 'general'").bind(`${identity.userId}-a2`),
+      db.prepare("UPDATE weekly_actions SET source = 'seed' WHERE id = ?").bind(`${identity.userId}-a3`),
+      db.prepare("UPDATE weekly_actions SET task_type = 'exercise', source = 'seed' WHERE id = ? AND task_type = 'general'").bind(`${identity.userId}-a4`),
+      db.prepare("UPDATE monthly_outcomes SET journey_id=?,kind='milestone',period=? WHERE id=? AND journey_id=''").bind(`${identity.userId}-${visionJourneyImportId}-2`,currentPeriod,`${identity.userId}-finance`),
+      db.prepare("UPDATE monthly_outcomes SET journey_id=?,kind='habit',period=? WHERE id=? AND journey_id=''").bind(`${identity.userId}-${visionJourneyImportId}-5`,currentPeriod,`${identity.userId}-exercise`),
+      db.prepare("UPDATE monthly_outcomes SET journey_id=?,kind='habit',period=? WHERE id=? AND journey_id=''").bind(`${identity.userId}-${visionJourneyImportId}-7`,currentPeriod,`${identity.userId}-english`),
+      db.prepare("UPDATE monthly_outcomes SET journey_id=?,kind='milestone',period=? WHERE id=? AND journey_id=''").bind(`${identity.userId}-${visionJourneyImportId}-11`,currentPeriod,`${identity.userId}-career`),
+    ]);
+  }
   await ensureExecutionCycles(db,identity);
 }

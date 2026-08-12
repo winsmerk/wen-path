@@ -26,7 +26,7 @@ test("renders the LifeOS application shell", async () => {
 
 test("ships product metadata, adaptive planning, and database declaration", async () => {
   const { readFile } = await import("node:fs/promises");
-  const [layout, page, lifeOS, workspaceApi, journalApi, recordsApi, schema, visionJourneys, hosting] = await Promise.all([
+  const [layout, page, lifeOS, workspaceApi, journalApi, recordsApi, schema, workspaceLib, visionJourneys, hosting] = await Promise.all([
     readFile(new URL("app/layout.tsx", templateRoot), "utf8"),
     readFile(new URL("app/page.tsx", templateRoot), "utf8"),
     readFile(new URL("app/LifeOS.tsx", templateRoot), "utf8"),
@@ -34,6 +34,7 @@ test("ships product metadata, adaptive planning, and database declaration", asyn
     readFile(new URL("app/api/journal/route.ts", templateRoot), "utf8"),
     readFile(new URL("app/api/records/route.ts", templateRoot), "utf8"),
     readFile(new URL("db/schema.ts", templateRoot), "utf8"),
+    readFile(new URL("lib/workspace.ts", templateRoot), "utf8"),
     readFile(new URL("lib/vision-journeys.ts", templateRoot), "utf8"),
     readFile(new URL(".openai/hosting.json", templateRoot), "utf8"),
   ]);
@@ -88,6 +89,8 @@ test("ships product metadata, adaptive planning, and database declaration", asyn
   assert.match(workspaceApi, /is_side_hustle/);
   assert.match(workspaceApi, /kill_rule_count/);
   assert.match(workspaceApi, /generate-month-outcomes/);
+  assert.match(workspaceApi, /generatedCount/);
+  assert.match(workspaceApi, /month_generated_full/);
   assert.match(workspaceApi, /generate-journey-tasks/);
   assert.match(workspaceApi, /evaluate-journey-tasks/);
   assert.match(workspaceApi, /source_task_id/);
@@ -104,6 +107,8 @@ test("ships product metadata, adaptive planning, and database declaration", asyn
   assert.match(workspaceApi, /reserve_fund/);
   assert.match(workspaceApi, /settleFinancialMonths/);
   assert.match(workspaceApi, /financial_monthly_bills/);
+  assert.match(lifeOS, /onEdit=\{setEditingOutcome\}/);
+  assert.match(workspaceLib, /if \(!profile\?\.initialized\)/);
   assert.match(workspaceApi, /journalEntries/);
   assert.match(journalApi, /invalid_images/);
   assert.match(journalApi, /DELETE/);
