@@ -496,6 +496,7 @@ function Journeys({ items, tasks, busy, mutate }: { items: Journey[];tasks:Journ
   const [editingTask,setEditingTask]=useState<JourneyTask|null>(null);
   const [evaluation,setEvaluation]=useState<{journeyId:string;score:number;summary:string;strengths:string[];issues:string[];suggestions:string[]}|null>(null);
   const [evaluating,setEvaluating]=useState("");
+  const [clearConfirm,setClearConfirm]=useState(false);
   const areas = ["全部", "健康", "英语", "职业", "财务与资产", "收入", "关系与家庭", "探索与生活"];
   const stageItems = stageFilter === "全部阶段" ? items : items.filter((item) => item.stage === (stageFilter === "当前阶段" ? currentStage : stageFilter));
   const visible = filter === "全部" ? stageItems : stageItems.filter((item) => item.area === filter);
@@ -503,7 +504,7 @@ function Journeys({ items, tasks, busy, mutate }: { items: Journey[];tasks:Journ
   const stageCompleted = items.filter((item) => item.stage === currentStage && item.status === "completed").length;
   const stageTotal = items.filter((item) => item.stage === currentStage).length;
   return <>
-    <PageHeader kicker="愿景 → 关卡 → 主任务 → 周期子任务" title="愿景闯关"><div className="action-row"><div className="stage-chip"><span />当前激活 {activeCount}</div><button className="primary-button" onClick={() => setCreating(true)}>＋ 添加关卡</button></div></PageHeader>
+    <PageHeader kicker="愿景 → 关卡 → 主任务 → 周期子任务" title="愿景闯关"><div className="action-row"><div className="stage-chip"><span />当前激活 {activeCount}</div><button className={clearConfirm?"danger-button confirm":"soft-button"} disabled={busy} onClick={()=>clearConfirm?mutate({action:"clear-legacy-planning-data",confirm:"CLEAR_LEGACY_PLANS"},"旧关卡、月计划和周计划已全部清除").then((ok)=>{if(ok)setClearConfirm(false);}):setClearConfirm(true)}>{clearConfirm?"确认清除旧关卡与计划":"清除旧数据"}</button><button className="primary-button" onClick={() => setCreating(true)}>＋ 添加关卡</button></div></PageHeader>
     <div className="journey-stage-bar"><div><span className="eyebrow">当前阶段</span><b>{currentStage}</b><small>{stageCompleted}/{stageTotal} 已完成 · 完成本阶段后自动解锁下一阶段</small></div><select value={stageFilter} onChange={(event)=>setStageFilter(event.target.value)}><option>当前阶段</option><option>全部阶段</option>{stages.map((stage)=><option key={stage}>{stage}</option>)}</select></div>
     <div className="filter-row">{areas.map((area) => <button key={area} className={filter === area ? "active" : ""} onClick={() => setFilter(area)}>{area}</button>)}</div>
     <section className="journey-list">
