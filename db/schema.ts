@@ -10,6 +10,7 @@ export const profiles = sqliteTable("profiles", {
   weeklyGoal: text("weekly_goal").notNull().default(""),
   sideHustleLimitMinutes: integer("side_hustle_limit_minutes").notNull().default(360),
   protectedDay: text("protected_day").notNull().default("周日"),
+  removedModulesPurged: integer("removed_modules_purged", { mode: "boolean" }).notNull().default(false),
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
 });

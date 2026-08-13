@@ -1,6 +1,6 @@
 import { env } from "cloudflare:workers";
 import { headers } from "next/headers";
-import { vision40, visionJourneyImportId, visionJourneySeeds } from "@/lib/vision-journeys";
+import { vision40 } from "@/lib/vision-journeys";
 
 export type WorkspaceIdentity = {
   userId: string;
@@ -56,6 +56,7 @@ export async function ensureSchema(db: D1Database) {
       weekly_goal TEXT NOT NULL DEFAULT '',
       side_hustle_limit_minutes INTEGER NOT NULL DEFAULT 360,
       protected_day TEXT NOT NULL DEFAULT '周日',
+      removed_modules_purged INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL, updated_at TEXT NOT NULL
     )`),
     db.prepare(`CREATE TABLE IF NOT EXISTS journeys (
@@ -212,6 +213,7 @@ export async function ensureSchema(db: D1Database) {
   }
   if (!profileColumns.results.some((column) => column.name === "side_hustle_limit_minutes")) await db.prepare("ALTER TABLE profiles ADD COLUMN side_hustle_limit_minutes INTEGER NOT NULL DEFAULT 360").run();
   if (!profileColumns.results.some((column) => column.name === "protected_day")) await db.prepare("ALTER TABLE profiles ADD COLUMN protected_day TEXT NOT NULL DEFAULT '周日'").run();
+  if (!profileColumns.results.some((column) => column.name === "removed_modules_purged")) await db.prepare("ALTER TABLE profiles ADD COLUMN removed_modules_purged INTEGER NOT NULL DEFAULT 0").run();
   const outcomeColumns = await db.prepare("PRAGMA table_info(monthly_outcomes)").all<{ name: string }>();
   if (!outcomeColumns.results.some((column) => column.name === "journey_id")) await db.prepare("ALTER TABLE monthly_outcomes ADD COLUMN journey_id TEXT NOT NULL DEFAULT ''").run();
   if (!outcomeColumns.results.some((column) => column.name === "kind")) await db.prepare("ALTER TABLE monthly_outcomes ADD COLUMN kind TEXT NOT NULL DEFAULT 'milestone'").run();
@@ -263,103 +265,26 @@ export async function ensureSchema(db: D1Database) {
   await db.prepare("PRAGMA optimize").run();
 }
 
-const outcomeSeeds = [
-  ["finance", "看清真实财务底盘", "完成净资产表、真实月支出和12个月应急金标准", 25, 5],
-  ["exercise", "完成12次运动", "最低可接受10次，保持恢复良好", 17, 8],
-  ["english", "完成12次英语练习", "最低10次，并保留一份口语基准录音", 8, 8],
-  ["career", "形成5个职业案例初稿", "整理10个项目，5个形成初稿并确定职业主线", 10, 12],
-] as const;
-
-const actionSeeds = [
-  ["a1", "finance", "整理现金、固定资产、投资、收入与固定支出", 45, "周三", 1, "finance"],
-  ["a2", "english", "录制3分钟英文自我介绍", 35, "周四", 2, "english"],
-  ["a3", "career", "列出10个重要职业项目", 60, "周六", 3, "general"],
-  ["a4", "exercise", "完成3次运动", 135, "本周", 4, "exercise"],
-] as const;
-
-export async function ensureExecutionCycles(db: D1Database, identity: WorkspaceIdentity) {
-  const now = new Date().toISOString();
-  const { weekStart,weekEnd,month } = executionPeriods();
-  const profile = await db.prepare("SELECT weekly_goal,weekly_capacity_minutes FROM profiles WHERE user_id=?").bind(identity.userId).first<{weekly_goal:string;weekly_capacity_minutes:number}>();
-  const cycleId = `${identity.userId}-week-${weekStart}`;
-  const existing = await db.prepare("SELECT id FROM weekly_cycles WHERE id=? AND user_id=?").bind(cycleId,identity.userId).first();
-  if (!existing) {
-    const previous = await db.prepare("SELECT id FROM weekly_cycles WHERE user_id=? AND status='active' ORDER BY week_start DESC LIMIT 1").bind(identity.userId).first<{id:string}>();
-    if (previous) {
-      const counts = await db.prepare("SELECT COUNT(*) AS total,SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END) AS completed FROM weekly_actions WHERE user_id=? AND cycle_id=?").bind(identity.userId,previous.id).first<{total:number;completed:number}>();
-      await db.prepare("UPDATE weekly_cycles SET status='archived',archived_at=?,total_count=?,completed_count=? WHERE id=? AND user_id=?").bind(now,Number(counts?.total??0),Number(counts?.completed??0),previous.id,identity.userId).run();
-    }
-    await db.prepare("INSERT INTO weekly_cycles (id,user_id,week_start,week_end,goal,capacity_minutes,status,created_at) VALUES (?,?,?,?,?,?,'active',?)").bind(cycleId,identity.userId,weekStart,weekEnd,profile?.weekly_goal||"",profile?.weekly_capacity_minutes||420,now).run();
-  }
-  await db.prepare("UPDATE weekly_actions SET cycle_id=? WHERE user_id=? AND cycle_id=''").bind(cycleId,identity.userId).run();
-  await db.prepare("UPDATE reviews SET week_start=? WHERE user_id=? AND week_start=''").bind(weekStart,identity.userId).run();
-
-  const currentOutcomes = await db.prepare("SELECT COUNT(*) AS total FROM monthly_outcomes WHERE user_id=? AND period=?").bind(identity.userId,month).first<{total:number}>();
-  if (!Number(currentOutcomes?.total??0)) {
-    const previousRows = await db.prepare("SELECT * FROM monthly_outcomes WHERE user_id=? AND period=(SELECT MAX(period) FROM monthly_outcomes WHERE user_id=? AND period<?) ORDER BY rowid").bind(identity.userId,identity.userId,month).all<{id:string;title:string;acceptance_criteria:string;expected_hours:number;journey_id:string;kind:string;progress:number}>();
-    const carry = previousRows.results.filter((item)=>Number(item.progress)<100);
-    if (previousRows.results.length) {
-      const updates = previousRows.results.map((item)=>db.prepare("UPDATE monthly_outcomes SET status=?,settled_at=? WHERE id=? AND user_id=?").bind(Number(item.progress)>=100?"completed":"rolled",now,item.id,identity.userId));
-      const inserts = carry.map((item)=>db.prepare("INSERT INTO monthly_outcomes (id,user_id,title,acceptance_criteria,progress,expected_hours,status,journey_id,kind,period,rolled_from_id) VALUES (?,?,?,?,0,?,'active',?,?,?,?)").bind(crypto.randomUUID(),identity.userId,item.title,item.acceptance_criteria,item.expected_hours,item.journey_id,item.kind,month,item.id));
-      await db.batch([...updates,...inserts]);
-    }
-  }
-  return { cycleId,weekStart,weekEnd,month };
-}
-
 export async function seedWorkspace(db: D1Database, identity: WorkspaceIdentity) {
   const now = new Date().toISOString();
-  const currentPeriod = now.slice(0, 7);
   await db.prepare(
     `INSERT OR IGNORE INTO profiles
       (user_id, display_name, vision, target_date, initialized, created_at, updated_at)
       VALUES (?, ?, ?, ?, 0, ?, ?)`,
   ).bind(identity.userId, identity.displayName, vision40, "2034-08-11", now, now).run();
-  const profile = await db.prepare("SELECT initialized FROM profiles WHERE user_id=?").bind(identity.userId).first<{ initialized: number }>();
-
-  const importMarkerId = `${identity.userId}-${visionJourneyImportId}-100`;
-  const imported = await db.prepare("SELECT id FROM journeys WHERE id=? AND user_id=?").bind(importMarkerId, identity.userId).first();
-  if (!imported) {
-    const journeyStatements = visionJourneySeeds.map(([sequence, title, area, stage, acceptance, nextAction]) => db.prepare(
-      `INSERT INTO journeys
-        (id, user_id, sequence_number, title, area, stage, acceptance_criteria, status, progress, next_action)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?)`,
-    ).bind(`${identity.userId}-${visionJourneyImportId}-${sequence}`, identity.userId, sequence, title, area, stage, acceptance, sequence <= 5 ? "active" : "planned", nextAction));
-    await db.batch([
-      db.prepare("DELETE FROM journeys WHERE user_id=?").bind(identity.userId),
-      db.prepare("UPDATE profiles SET vision=?,updated_at=? WHERE user_id=?").bind(vision40, now, identity.userId),
-      ...journeyStatements,
-    ]);
+  const cleanup=await db.prepare("SELECT removed_modules_purged FROM profiles WHERE user_id=?").bind(identity.userId).first<{removed_modules_purged:number}>();
+  if(!cleanup?.removed_modules_purged){
+    const images=await db.prepare("SELECT object_key FROM footprint_images WHERE user_id=?").bind(identity.userId).all<{object_key:string}>();
+    const bucket=getMediaBucket();
+    for(const image of images.results) if(bucket) await bucket.delete(image.object_key);
+    await db.prepare("DELETE FROM footprint_images WHERE user_id=?").bind(identity.userId).run();
+    await db.prepare("DELETE FROM footprints WHERE user_id=?").bind(identity.userId).run();
+    await db.prepare("DELETE FROM weekly_actions WHERE user_id=?").bind(identity.userId).run();
+    await db.prepare("DELETE FROM monthly_outcomes WHERE user_id=?").bind(identity.userId).run();
+    await db.prepare("DELETE FROM weekly_cycles WHERE user_id=?").bind(identity.userId).run();
+    await db.prepare("DELETE FROM journey_tasks WHERE user_id=?").bind(identity.userId).run();
+    await db.prepare("DELETE FROM journeys WHERE user_id=?").bind(identity.userId).run();
+    await db.prepare("UPDATE financial_records SET action_id=NULL WHERE user_id=?").bind(identity.userId).run();
+    await db.prepare("UPDATE profiles SET removed_modules_purged=1,updated_at=? WHERE user_id=?").bind(now,identity.userId).run();
   }
-
-  const outcomeStatements = outcomeSeeds.map(([id, title, acceptance, progress, hours]) =>
-    db.prepare(
-      `INSERT OR IGNORE INTO monthly_outcomes
-        (id, user_id, title, acceptance_criteria, progress, expected_hours, status)
-        VALUES (?, ?, ?, ?, ?, ?, 'active')`,
-    ).bind(`${identity.userId}-${id}`, identity.userId, title, acceptance, progress, hours),
-  );
-
-  const actionStatements = actionSeeds.map(([id, outcomeId, title, minutes, day, priority, taskType]) =>
-    db.prepare(
-      `INSERT OR IGNORE INTO weekly_actions
-        (id, user_id, outcome_id, title, estimated_minutes, scheduled_for, priority, status, task_type, source)
-        VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, 'seed')`,
-    ).bind(`${identity.userId}-${id}`, identity.userId, `${identity.userId}-${outcomeId}`, title, minutes, day, priority, taskType),
-  );
-
-  if (!profile?.initialized) {
-    await db.batch([...outcomeStatements, ...actionStatements]);
-    await db.batch([
-      db.prepare("UPDATE weekly_actions SET task_type = 'finance', source = 'seed', title = '整理现金、固定资产、投资、收入与固定支出' WHERE id = ?").bind(`${identity.userId}-a1`),
-      db.prepare("UPDATE weekly_actions SET task_type = 'english', source = 'seed' WHERE id = ? AND task_type = 'general'").bind(`${identity.userId}-a2`),
-      db.prepare("UPDATE weekly_actions SET source = 'seed' WHERE id = ?").bind(`${identity.userId}-a3`),
-      db.prepare("UPDATE weekly_actions SET task_type = 'exercise', source = 'seed' WHERE id = ? AND task_type = 'general'").bind(`${identity.userId}-a4`),
-      db.prepare("UPDATE monthly_outcomes SET journey_id=?,kind='milestone',period=? WHERE id=? AND journey_id=''").bind(`${identity.userId}-${visionJourneyImportId}-2`,currentPeriod,`${identity.userId}-finance`),
-      db.prepare("UPDATE monthly_outcomes SET journey_id=?,kind='habit',period=? WHERE id=? AND journey_id=''").bind(`${identity.userId}-${visionJourneyImportId}-5`,currentPeriod,`${identity.userId}-exercise`),
-      db.prepare("UPDATE monthly_outcomes SET journey_id=?,kind='habit',period=? WHERE id=? AND journey_id=''").bind(`${identity.userId}-${visionJourneyImportId}-7`,currentPeriod,`${identity.userId}-english`),
-      db.prepare("UPDATE monthly_outcomes SET journey_id=?,kind='milestone',period=? WHERE id=? AND journey_id=''").bind(`${identity.userId}-${visionJourneyImportId}-11`,currentPeriod,`${identity.userId}-career`),
-    ]);
-  }
-  await ensureExecutionCycles(db,identity);
 }
