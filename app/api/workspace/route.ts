@@ -330,13 +330,6 @@ export async function POST(request: Request) {
   } else if (body.action === "clear-legacy-planning-data") {
     if (body.confirm !== "CLEAR_LEGACY_PLANS") return NextResponse.json({ error: "confirmation_required" }, { status: 400 });
     const legacyPrefix=`${identity.userId}-wen-40-journey-v1-%`;
-    const [journeysCount,tasksCount,outcomesCount,actionsCount,cyclesCount]=await Promise.all([
-      db.prepare("SELECT COUNT(*) AS total FROM journeys WHERE user_id=? AND id LIKE ? AND deleted_at IS NULL").bind(identity.userId,legacyPrefix).first<{total:number}>(),
-      db.prepare("SELECT COUNT(*) AS total FROM journey_tasks WHERE user_id=? AND journey_id LIKE ?").bind(identity.userId,legacyPrefix).first<{total:number}>(),
-      db.prepare("SELECT COUNT(*) AS total FROM monthly_outcomes WHERE user_id=?").bind(identity.userId).first<{total:number}>(),
-      db.prepare("SELECT COUNT(*) AS total FROM weekly_actions WHERE user_id=?").bind(identity.userId).first<{total:number}>(),
-      db.prepare("SELECT COUNT(*) AS total FROM weekly_cycles WHERE user_id=?").bind(identity.userId).first<{total:number}>(),
-    ]);
     const markerId=`${identity.userId}-wen-40-journey-v1-100`;
     await db.batch([
       db.prepare("DELETE FROM weekly_actions WHERE user_id=?").bind(identity.userId),
@@ -346,7 +339,7 @@ export async function POST(request: Request) {
       db.prepare("DELETE FROM journeys WHERE user_id=? AND id LIKE ?").bind(identity.userId,legacyPrefix),
       db.prepare("INSERT INTO journeys (id,user_id,sequence_number,title,area,stage,acceptance_criteria,status,progress,next_action,deleted_at) VALUES (?,?,100,'旧版关卡数据已清除','探索与生活','已清除','仅用于阻止旧版种子数据再次导入','paused',0,'',?)").bind(markerId,identity.userId,now),
     ]);
-    return NextResponse.json({ok:true,deleted:{journeys:Number(journeysCount?.total||0),journeyTasks:Number(tasksCount?.total||0),monthlyOutcomes:Number(outcomesCount?.total||0),weeklyActions:Number(actionsCount?.total||0),weeklyCycles:Number(cyclesCount?.total||0)}});
+    return NextResponse.json({ok:true,cleared:"legacy_journeys_and_all_plans"});
   } else if (body.action === "update-vision") {
     const vision = clean(body.vision, 2000), targetDate = clean(body.targetDate, 10);
     const parsedTarget = new Date(`${targetDate}T00:00:00`);
