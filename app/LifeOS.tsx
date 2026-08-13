@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
+import { JourneyManager, PlanManager, PlanningData, PlanningToday } from "@/app/PlanningSystem";
 
 type Profile = {
   display_name: string;
@@ -123,11 +124,13 @@ type Workspace = {
   stopRuleEvents:Array<{id:string;week_start:string;rule_code:string;severity:"adjust"|"stop";reason:string;created_at:string}>;
 };
 
-type Tab = "today" | "vision" | "records" | "finance" | "review";
+type Tab = "today" | "vision" | "journey" | "plan" | "records" | "finance" | "review";
 
 const tabs: { key: Tab; label: string; mark: string }[] = [
   { key: "today", label: "今日", mark: "⌂" },
-  { key: "vision", label: "40岁愿景", mark: "✦" },
+  { key: "vision", label: "愿景", mark: "✦" },
+  { key: "journey", label: "征程", mark: "◎" },
+  { key: "plan", label: "计划", mark: "◫" },
   { key: "records", label: "记录", mark: "+" },
   { key: "finance", label: "财务", mark: "¥" },
   { key: "review", label: "复盘", mark: "↗" },
@@ -162,30 +165,31 @@ function compactVision(vision: string) {
 
 export default function LifeOS() {
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
+  const [planning, setPlanning] = useState<PlanningData | null>(null);
   const [tab, setTab] = useState<Tab>("today");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState("");
   const [checkinType, setCheckinType] = useState<Checkin["type"] | null>(null);
-  const [completingAction, setCompletingAction] = useState<Action | null>(null);
 
   const load = useCallback(async () => {
-    const response = await fetch("/api/workspace", { cache: "no-store" });
-    if (!response.ok) throw new Error("无法读取工作台");
-    setWorkspace((await response.json()) as Workspace);
+    const [workspaceResponse,planningResponse] = await Promise.all([fetch("/api/workspace", { cache: "no-store" }),fetch("/api/planning", { cache: "no-store" })]);
+    if (!workspaceResponse.ok||!planningResponse.ok) throw new Error("无法读取工作台");
+    const [workspaceData,planningData]=await Promise.all([workspaceResponse.json() as Promise<Workspace>,planningResponse.json() as Promise<PlanningData>]);
+    setWorkspace(workspaceData);setPlanning(planningData);
     setLoading(false);
   }, []);
 
   useEffect(() => {
     let active = true;
-    fetch("/api/workspace", { cache: "no-store" })
-      .then((response) => {
-        if (!response.ok) throw new Error("无法读取工作台");
-        return response.json() as Promise<Workspace>;
+    Promise.all([fetch("/api/workspace", { cache: "no-store" }),fetch("/api/planning", { cache: "no-store" })])
+      .then(async ([workspaceResponse,planningResponse]) => {
+        if (!workspaceResponse.ok||!planningResponse.ok) throw new Error("无法读取工作台");
+        return Promise.all([workspaceResponse.json() as Promise<Workspace>,planningResponse.json() as Promise<PlanningData>]);
       })
-      .then((data) => {
+      .then(([workspaceData,planningData]) => {
         if (!active) return;
-        setWorkspace(data);
+        setWorkspace(workspaceData);setPlanning(planningData);
         setLoading(false);
       })
       .catch(() => {
@@ -220,8 +224,16 @@ export default function LifeOS() {
     return true;
   }
 
+  async function mutatePlanning(payload:Record<string,unknown>,success?:string){
+    setSaving(true);
+    const response=await fetch("/api/planning",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(payload)});
+    if(!response.ok){setNotice("保存失败，请检查填写内容后重试。");setSaving(false);return false;}
+    setPlanning((await response.json()) as PlanningData);setSaving(false);
+    if(success){setNotice(success);window.setTimeout(()=>setNotice(""),2800);}return true;
+  }
+
   if (loading) return <Loading />;
-  if (!workspace) return <ErrorState />;
+  if (!workspace||!planning) return <ErrorState />;
   if (!workspace.profile.initialized) {
     return <Onboarding workspace={workspace} busy={saving} onStart={() => mutate({ action: "initialize" })} />;
   }
@@ -230,10 +242,6 @@ export default function LifeOS() {
   const exerciseCount = workspace.checkins.filter((item) => item.type === "exercise").length;
   const englishCount = workspace.checkins.filter((item) => item.type === "english").length;
   const activeActions = workspace.actions.filter((item) => item.status !== "paused");
-  const plannedMinutes = activeActions.reduce((sum, item) => sum + item.estimated_minutes, 0);
-  const completedMinutes = workspace.actions
-    .filter((item) => item.status === "completed")
-    .reduce((sum, item) => sum + item.estimated_minutes, 0);
   const visionTime = visionCountdown(workspace.profile.target_date);
 
   return (
@@ -248,9 +256,9 @@ export default function LifeOS() {
           ))}
         </nav>
         <button type="button" className={tab === "vision" ? "vision-mini active" : "vision-mini"} onClick={() => setTab("vision")}>
-          <span className="eyebrow">40岁愿景</span>
+          <span className="eyebrow">愿景</span>
           <p>{compactVision(workspace.profile.vision)}</p>
-          <div className="years-row"><span>还有 {visionTime.years} 年 {visionTime.months} 个月</span><i><b /></i></div>
+          {workspace.profile.target_date&&<div className="years-row"><span>{visionTime.totalDays>0?`还有 ${visionTime.years} 年 ${visionTime.months} 个月`:"已到达目标日期"}</span><i><b /></i></div>}
         </button>
         <div className="user-row"><span className="avatar">文</span><span><strong>{workspace.profile.display_name}</strong><small>建立基线 · 第1阶段</small></span></div>
       </aside>
@@ -258,21 +266,10 @@ export default function LifeOS() {
       <main className="main-content">
         {notice && <div className="toast" role="status">{notice}</div>}
         <MobileHeader />
-        {tab === "today" && (
-          <Today
-            workspace={workspace}
-            completedActions={completedActions}
-            exerciseCount={exerciseCount}
-            englishCount={englishCount}
-            plannedMinutes={plannedMinutes}
-            completedMinutes={completedMinutes}
-            busy={saving}
-            onToggle={(action) => action.status === "completed" ? mutate({ action: "toggle-action", id: action.id }, "已撤销完成") : setCompletingAction(action)}
-            onCheckin={setCheckinType}
-            onNavigate={setTab}
-          />
-        )}
-        {tab === "vision" && <Vision profile={workspace.profile} journeys={workspace.journeys} actions={workspace.actions} busy={saving} mutate={mutate} />}
+        {tab === "today" && <PlanningToday data={planning} busy={saving} mutate={mutatePlanning} onQuickRecord={setCheckinType}/>}
+        {tab === "vision" && <Vision profile={workspace.profile} planning={planning} busy={saving} mutate={mutate} />}
+        {tab === "journey" && <JourneyManager data={planning} busy={saving} mutate={mutatePlanning}/>}
+        {tab === "plan" && <PlanManager data={planning} busy={saving} mutate={mutatePlanning}/>}
         {tab === "records" && <Records items={workspace.checkins} outputs={workspace.taskOutputs} messages={workspace.englishMessages} journals={workspace.journalEntries} journalImages={workspace.journalImages} recordImages={workspace.recordImages} busy={saving} onCheckin={setCheckinType} mutate={mutate} onReload={load} />}
         {tab === "finance" && <Finance records={workspace.financialRecords} bills={workspace.financialMonthlyBills} busy={saving} mutate={mutate} />}
         {tab === "review" && (
@@ -307,7 +304,6 @@ export default function LifeOS() {
           }}
         />
       )}
-      {completingAction && <TaskCompleteDialog action={completingAction} busy={saving} onClose={() => setCompletingAction(null)} onSubmit={async (values) => { const ok = await mutate({ action: "complete-task", id: completingAction.id, ...values }, "任务已完成，成果也记录好了"); if (ok) setCompletingAction(null); }} />}
     </div>
   );
 }
@@ -332,32 +328,31 @@ function visionCountdown(targetDate: string) {
   return { years, months, days, totalDays: Math.ceil((target.getTime() - today.getTime()) / 86_400_000) };
 }
 
-function Vision({ profile, journeys, actions, busy, mutate }: { profile: Profile; journeys: Journey[]; actions: Action[]; busy: boolean; mutate: (payload: Record<string, unknown>, success?: string) => Promise<boolean> }) {
+function Vision({ profile, planning, busy, mutate }: { profile: Profile; planning: PlanningData; busy: boolean; mutate: (payload: Record<string, unknown>, success?: string) => Promise<boolean> }) {
   const [editing, setEditing] = useState(false);
   const remaining = visionCountdown(profile.target_date);
-  const completedJourneys = journeys.filter((item) => item.status === "completed");
-  const completedActions = actions.filter((item) => item.status === "completed");
-  const future = journeys.filter((item) => item.status !== "completed").sort((a, b) => (a.status === "active" ? -1 : b.status === "active" ? 1 : b.progress - a.progress));
-  const targetLabel = new Date(`${profile.target_date}T00:00:00`).toLocaleDateString("zh-CN", { year: "numeric", month: "long", day: "numeric" });
+  const completed = planning.goals.filter((item) => item.status === "completed");
+  const future = planning.goals.filter((item) => item.status !== "completed").sort((a,b)=>a.priority-b.priority||a.sort_order-b.sort_order);
+  const targetLabel = profile.target_date?new Date(`${profile.target_date}T00:00:00`).toLocaleDateString("zh-CN", { year: "numeric", month: "long", day: "numeric" }):"未设置目标日期";
   return <>
-    <PageHeader kicker="把愿景变成看得见的路" title="40岁愿景"><button className="primary-button" onClick={() => setEditing(true)}>编辑愿景</button></PageHeader>
+    <PageHeader kicker="把愿景变成看得见的路" title="愿景"><button className="primary-button" onClick={() => setEditing(true)}>编辑愿景</button></PageHeader>
     <section className="vision-hero-card">
       <span className="eyebrow">My North Star</span>
       <blockquote>{profile.vision}</blockquote>
       <div><span>目标日期</span><b>{targetLabel}</b></div>
     </section>
-    <section className="vision-countdown" aria-label="距离愿景的时间">
+    {profile.target_date&&<section className="vision-countdown" aria-label="距离愿景的时间">
       <div><b>{remaining.years}</b><span>年</span></div><i>·</i><div><b>{remaining.months}</b><span>个月</span></div><i>·</i><div><b>{remaining.days}</b><span>天</span></div>
-      <p>距离愿景还有 <strong>{remaining.totalDays.toLocaleString("zh-CN")}</strong> 天。时间不是压力，是帮助你选择优先级的边界。</p>
-    </section>
+      <p>{remaining.totalDays>0?<>距离愿景还有 <strong>{remaining.totalDays.toLocaleString("zh-CN")}</strong> 天。时间不是压力，是帮助你选择优先级的边界。</>:"已到达目标日期，可以在复盘后设置新的时间边界。"}</p>
+    </section>}
     <section className="vision-roadmap">
       <article className="vision-column completed">
-        <div className="section-heading"><div><span className="eyebrow">Evidence</span><h3>已经完成的重要事项</h3></div><b className="vision-count">{completedJourneys.length || completedActions.length}</b></div>
-        <div className="vision-items">{completedJourneys.length ? completedJourneys.map((item) => <div className="vision-item done" key={item.id}><span>✓</span><div><small>{item.area} · 第 {item.sequence_number} 次征程</small><b>{item.title}</b><p>{item.acceptance_criteria}</p></div></div>) : completedActions.length ? completedActions.slice(0, 8).map((item) => <div className="vision-item done" key={item.id}><span>✓</span><div><small>已完成行动</small><b>{item.title}</b><p>这一步已经成为通往愿景的真实证据。</p></div></div>) : <div className="empty-list"><b>第一项重要成果正在路上</b><p>完成一次征程后，它会沉淀在这里。</p></div>}</div>
+        <div className="section-heading"><div><span className="eyebrow">Evidence</span><h3>已经完成的重要事项</h3></div><b className="vision-count">{completed.length}</b></div>
+        <div className="vision-items">{completed.length?completed.map((item)=><div className="vision-item done" key={item.id}><span>✓</span><div><small>{planning.stages.find((stage)=>stage.id===item.stage_id)?.title||"征程"}</small><b>{item.title}</b><p>{item.acceptance_criteria||item.description}</p></div></div>):<div className="empty-list"><b>第一项重要成果正在路上</b><p>完成一个征程目标后，它会沉淀在这里。</p></div>}</div>
       </article>
       <article className="vision-column future">
         <div className="section-heading"><div><span className="eyebrow">The Road Ahead</span><h3>未来要做的事情</h3></div><b className="vision-count">{future.length}</b></div>
-        <div className="vision-items">{future.slice(0, 10).map((item) => <div className={`vision-item ${item.status}`} key={item.id}><span>{item.status === "active" ? "→" : item.sequence_number}</span><div><small>{item.status === "active" ? "正在推进" : "未来征程"} · {item.area}</small><b>{item.title}</b><p>{item.next_action}</p><i><b style={{ width: `${item.progress}%` }} /></i></div></div>)}</div>
+        <div className="vision-items">{future.slice(0,10).map((item,index)=><div className={`vision-item ${item.status}`} key={item.id}><span>{item.status==="active"?"→":index+1}</span><div><small>{item.status==="active"?"正在推进":"未来目标"} · {planning.stages.find((stage)=>stage.id===item.stage_id)?.title||"未分阶段"}</small><b>{item.title}</b><p>{item.description||item.acceptance_criteria}</p></div></div>)}</div>
       </article>
     </section>
     {editing && <VisionDialog profile={profile} busy={busy} onClose={() => setEditing(false)} onSave={async (vision, targetDate) => { const ok = await mutate({ action: "update-vision", vision, targetDate }, "愿景已更新"); if (ok) setEditing(false); }} />}
@@ -368,7 +363,7 @@ function VisionDialog({ profile, busy, onClose, onSave }: { profile: Profile; bu
   const [vision, setVision] = useState(profile.vision);
   const [targetDate, setTargetDate] = useState(profile.target_date);
   async function submit(event: FormEvent) { event.preventDefault(); await onSave(vision, targetDate); }
-  return <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><form className="dialog vision-dialog" onSubmit={submit}><button type="button" className="dialog-close" onClick={onClose}>×</button><span className="eyebrow">40岁愿景</span><h2>编辑我的北极星</h2><p>写下你真正想抵达的生活，以及希望实现它的时间。</p><label><span>愿景详细信息</span><textarea required maxLength={2000} value={vision} onChange={(event) => setVision(event.target.value)} placeholder="40岁时，我希望……" /></label><label><span>目标日期</span><input required type="date" value={targetDate} onChange={(event) => setTargetDate(event.target.value)} /></label><div className="dialog-actions"><button type="button" className="soft-button" onClick={onClose}>取消</button><button className="primary-button" disabled={busy || !vision.trim()}>{busy ? "正在保存…" : "保存愿景"}</button></div></form></div>;
+  return <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><form className="dialog vision-dialog" onSubmit={submit}><button type="button" className="dialog-close" onClick={onClose}>×</button><span className="eyebrow">愿景</span><h2>编辑我的北极星</h2><p>写下你真正想抵达的生活；目标日期可以留空。</p><label><span>愿景详细信息</span><textarea required maxLength={2000} value={vision} onChange={(event) => setVision(event.target.value)} placeholder="我希望构建怎样的生活……" /></label><label><span>目标日期（可选）</span><input type="date" value={targetDate} onChange={(event) => setTargetDate(event.target.value)} /></label><div className="dialog-actions"><button type="button" className="soft-button" onClick={onClose}>取消</button><button className="primary-button" disabled={busy || !vision.trim()}>{busy ? "正在保存…" : "保存愿景"}</button></div></form></div>;
 }
 
 function MobileHeader() {
@@ -388,7 +383,7 @@ function Onboarding({ workspace, busy, onStart }: { workspace: Workspace; busy: 
     <main className="onboarding">
       <Brand />
       <section className="onboarding-card">
-        <span className="eyebrow">你的40岁愿景</span>
+        <span className="eyebrow">你的愿景</span>
         <h1>从今天开始，把想要的生活<br />一点点变成日常。</h1>
         <blockquote>{workspace.profile.vision}</blockquote>
         <div className="setup-grid">
@@ -408,6 +403,7 @@ function PageHeader({ title, kicker, children }: { title: string; kicker: string
   return <header className="page-header"><div><p>{kicker}</p><h1>{title}</h1></div>{children}</header>;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function Today(props: {
   workspace: Workspace;
   completedActions: number;
@@ -927,6 +923,7 @@ function WeeklySettingsDialog({ profile, busy, onClose, onSave }: { profile: Pro
   return <div className="dialog-backdrop" onMouseDown={(event)=>{if(event.target===event.currentTarget)onClose();}}><form className="dialog settings-dialog" onSubmit={(event)=>{event.preventDefault();onSave(capacity,goal,sideHustleLimit,protectedDay,true);}}><button type="button" className="dialog-close" onClick={onClose}>×</button><span className="ai-mark">✦</span><span className="eyebrow">动态周计划</span><h2>本周时间、目标与护栏</h2><p>AI 只安排约 85% 的时间，并优先保护健康、主业和休息。</p><label><span>每周可用时间：{Math.round(capacity/6)/10} 小时</span><input className="range-input" type="range" min="60" max="1200" step="30" value={capacity} onChange={(event)=>setCapacity(Number(event.target.value))} /></label><label><span>副业时间上限：{Math.round(sideHustleLimit/6)/10} 小时</span><input className="range-input" type="range" min="0" max="720" step="30" value={sideHustleLimit} onChange={(event)=>setSideHustleLimit(Number(event.target.value))} /></label><label><span>完全休息日</span><select value={protectedDay} onChange={(event)=>setProtectedDay(event.target.value)}>{["周一","周二","周三","周四","周五","周六","周日"].map((day)=><option key={day}>{day}</option>)}</select></label><label><span>本周目标</span><textarea required value={goal} onChange={(event)=>setGoal(event.target.value)} placeholder="例如：完成英文自我介绍，并能自然讲满3分钟" /></label><div className="dialog-actions"><button type="button" className="soft-button" disabled={busy} onClick={()=>onSave(capacity,goal,sideHustleLimit,protectedDay,false)}>仅保存</button><button className="primary-button" disabled={busy}>{busy?"正在生成…":"保存并生成计划"}</button></div></form></div>;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function TaskCompleteDialog({ action, busy, onClose, onSubmit }: { action: Action; busy: boolean; onClose: () => void; onSubmit: (values: Record<string, unknown>) => void }) {
   const [content,setContent]=useState(""),[duration,setDuration]=useState(30),[feeling,setFeeling]=useState(""),[category,setCategory]=useState<FinancialRecord["category"]>("cash"),[amount,setAmount]=useState(""),[investmentPrincipal,setInvestmentPrincipal]=useState(""),[investmentReturn,setInvestmentReturn]=useState("0"),[recordedAt,setDate]=useState(new Date().toISOString().slice(0,10)),[incomeType,setIncomeType]=useState<FinancialRecord["income_type"]>("salary"),[sourceName,setSourceName]=useState(""),[expenseScope,setExpenseScope]=useState<FinancialRecord["expense_scope"]>("personal");
   const prompts={reading:["读书笔记","写下核心观点、触动和下一步实践…"],english:["英语学习笔记","记录新表达、错误与改进…"],finance:["财务备注","说明这笔数据的口径…"],exercise:["运动记录",""],account_operation:["账号运营成果","记录发布内容、平台、数据变化或复盘结论…"],general:["完成成果（可选）","留下一句话，说明完成了什么…"]} as const;

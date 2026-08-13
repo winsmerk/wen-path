@@ -24,121 +24,89 @@ test("renders the LifeOS application shell", async () => {
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton/);
 });
 
-test("ships product metadata, adaptive planning, and database declaration", async () => {
+test("ships vision journey planning, reporting, and durable data declarations", async () => {
   const { readFile } = await import("node:fs/promises");
-  const [layout, page, lifeOS, workspaceApi, journalApi, recordsApi, schema, workspaceLib, taskScheduling, visionJourneys, hosting] = await Promise.all([
+  const [layout, page, lifeOS, planningUI, workspaceApi, planningApi, planningLib, journalApi, recordsApi, schema, workspaceLib, migration, hosting] = await Promise.all([
     readFile(new URL("app/layout.tsx", templateRoot), "utf8"),
     readFile(new URL("app/page.tsx", templateRoot), "utf8"),
     readFile(new URL("app/LifeOS.tsx", templateRoot), "utf8"),
+    readFile(new URL("app/PlanningSystem.tsx", templateRoot), "utf8"),
     readFile(new URL("app/api/workspace/route.ts", templateRoot), "utf8"),
+    readFile(new URL("app/api/planning/route.ts", templateRoot), "utf8"),
+    readFile(new URL("lib/planning.ts", templateRoot), "utf8"),
     readFile(new URL("app/api/journal/route.ts", templateRoot), "utf8"),
     readFile(new URL("app/api/records/route.ts", templateRoot), "utf8"),
     readFile(new URL("db/schema.ts", templateRoot), "utf8"),
     readFile(new URL("lib/workspace.ts", templateRoot), "utf8"),
-    readFile(new URL("lib/task-scheduling.ts", templateRoot), "utf8"),
-    readFile(new URL("lib/vision-journeys.ts", templateRoot), "utf8"),
+    readFile(new URL("drizzle/0016_vision_journey_planning.sql", templateRoot), "utf8"),
     readFile(new URL(".openai/hosting.json", templateRoot), "utf8"),
   ]);
   assert.match(layout, /const title = "wen flow · Build a life you love\."/);
   assert.match(page, /<LifeOS \/>/);
-  assert.match(lifeOS, /苏轼/);
-  assert.match(lifeOS, /帮我调整计划/);
-  assert.match(lifeOS, /编辑征程/);
+  assert.match(lifeOS, /label: "愿景"/);
+  assert.match(lifeOS, /key: "journey"/);
+  assert.match(lifeOS, /key: "plan"/);
+  assert.doesNotMatch(lifeOS, /label: "40岁愿景"/);
+  assert.match(lifeOS, /目标日期（可选）/);
   assert.match(lifeOS, /当前财务情况/);
   assert.match(lifeOS, /English Coach/);
   assert.doesNotMatch(lifeOS, /key: "footprints"/);
-  assert.match(lifeOS, /编辑愿景/);
-  assert.match(lifeOS, /未来要做的事情/);
-  assert.match(lifeOS, /compactVision/);
-  assert.match(lifeOS, /新增月度成果/);
-  assert.doesNotMatch(lifeOS, /key: "journeys"/);
-  assert.match(lifeOS, /关联月度成果/);
-  assert.doesNotMatch(lifeOS, /key: "plan"/);
-  assert.match(lifeOS, /AI 评估合理性/);
-  assert.match(lifeOS, /周任务/);
-  assert.match(lifeOS, /月任务/);
-  assert.match(lifeOS, /value="account_operation">账号运营/);
-  assert.match(lifeOS, /账号运营成果/);
-  assert.match(lifeOS, /executionFrequency/);
-  assert.match(lifeOS, /每周执行日（可选）/);
-  assert.match(lifeOS, /每月执行日（可选）/);
-  assert.match(lifeOS, /本周择时/);
-  assert.match(lifeOS, /提交一篇读书笔记/);
-  assert.match(lifeOS, /英语学习笔记/);
-  assert.match(lifeOS, /提交完成证据/);
-  assert.match(lifeOS, /保存并自动判断/);
+  assert.match(planningUI, /新增阶段/);
+  assert.match(planningUI, /阶段目标/);
+  assert.match(planningUI, /添加任务/);
+  assert.match(planningUI, /单次任务/);
+  assert.match(planningUI, /周期任务/);
+  assert.match(planningUI, /每天/);
+  assert.match(planningUI, /每周/);
+  assert.match(planningUI, /每月/);
+  assert.match(planningUI, /具体时间（逗号分隔，可不填）/);
+  assert.match(planningUI, /选择本月要推进的目标/);
+  assert.match(planningUI, /月计划已生成，周计划和每日待办已同步更新/);
+  assert.match(planningUI, /本周负载/);
+  assert.match(planningUI, /每周可用时间/);
+  assert.match(planningUI, /周报与月报/);
+  assert.match(planningUI, /function compareTasks/);
+  assert.match(planningUI, /scheduled_time\.localeCompare/);
+  assert.match(planningUI, /priority-b\.priority/);
+  assert.match(planningApi, /save-stage/);
+  assert.match(planningApi, /delete-stage/);
+  assert.match(planningApi, /save-goal/);
+  assert.match(planningApi, /delete-goal/);
+  assert.match(planningApi, /save-task/);
+  assert.match(planningApi, /delete-task/);
+  assert.match(planningApi, /save-month-plan/);
+  assert.match(planningApi, /update-instance/);
+  assert.match(planningApi, /capacity-settings/);
+  assert.match(planningLib, /generatePlanInstances/);
+  assert.match(planningLib, /INSERT OR IGNORE INTO task_instances_v2/);
+  assert.match(planningLib, /user_adjusted/);
+  assert.match(planningLib, /generateReports/);
+  assert.match(planningLib, /completionRate/);
+  assert.match(planningLib, /8\*3600000/);
   assert.match(lifeOS, /经营利润/);
   assert.match(lifeOS, /备用金/);
   assert.match(lifeOS, /点击查看明细/);
-  assert.match(lifeOS, /月底已结算/);
   assert.match(lifeOS, /投资本金/);
   assert.match(lifeOS, /本月收益（元，可为负）/);
   assert.match(lifeOS, /写一篇日记/);
   assert.match(lifeOS, /记下灵感/);
-  assert.match(lifeOS, /记录模块筛选/);
-  assert.match(lifeOS, /RecordEditDialog/);
-  assert.match(lifeOS, /追加图片/);
   assert.match(lifeOS, /删除记录/);
-  assert.match(lifeOS, /journey-\$\{item\.status\}/);
-  assert.match(lifeOS, /副业时间上限/);
-  assert.match(workspaceApi, /征程验收标准/);
-  assert.match(workspaceApi, /resolveTaskDay/);
-  assert.match(workspaceApi, /monthlyCandidates/);
-  assert.match(workspaceApi, /add-outcome/);
-  assert.match(workspaceApi, /update-weekly-action/);
-  assert.match(workspaceApi, /delete-weekly-action/);
-  assert.match(workspaceApi, /note_required/);
-  assert.match(workspaceApi, /complete-journey/);
-  assert.match(workspaceApi, /stage_locked/);
-  assert.match(workspaceApi, /is_side_hustle/);
-  assert.match(workspaceApi, /kill_rule_count/);
-  assert.match(workspaceApi, /generate-month-outcomes/);
-  assert.match(workspaceApi, /selectMonthlyCandidates/);
-  assert.match(workspaceApi, /generatedByTask/);
-  assert.match(workspaceApi, /j\.status='active'/);
-  assert.match(lifeOS, /生成月计划/);
-  assert.match(workspaceApi, /generate-journey-tasks/);
-  assert.match(workspaceApi, /evaluate-journey-tasks/);
-  assert.match(workspaceApi, /source_task_id/);
-  assert.match(workspaceApi, /execution_frequency/);
-  assert.match(workspaceApi, /preferred_weekday/);
-  assert.match(workspaceApi, /preferred_month_day/);
-  assert.match(workspaceApi, /resolveTaskDay/);
-  assert.match(workspaceApi, /account_operation/);
-  assert.match(workspaceApi, /remainingPlanningWeeks/);
-  assert.doesNotMatch(workspaceApi, /active_limit/);
-  assert.match(workspaceApi, /settle-month/);
-  assert.match(workspaceApi, /reviewJourneyEvidence/);
-  assert.match(workspaceApi, /reviewEvidenceLocally/);
-  assert.match(workspaceApi, /智能规则验收通过/);
-  assert.match(workspaceApi, /evaluateStopRules/);
-  assert.match(workspaceApi, /evidence_events/);
-  assert.match(workspaceApi, /reserve_fund/);
   assert.match(workspaceApi, /settleFinancialMonths/);
   assert.match(workspaceApi, /financial_monthly_bills/);
-  assert.match(lifeOS, /onEdit=\{setEditingOutcome\}/);
   assert.match(workspaceLib, /removed_modules_purged/);
   assert.match(workspaceLib, /DELETE FROM footprints/);
-  assert.match(workspaceLib, /DELETE FROM journeys/);
-  assert.match(workspaceLib, /DELETE FROM monthly_outcomes/);
   assert.match(workspaceApi, /SET action_id=NULL/);
-  assert.match(workspaceApi, /journalEntries/);
   assert.match(journalApi, /invalid_images/);
   assert.match(journalApi, /DELETE/);
   assert.match(recordsApi, /record_images/);
-  assert.match(recordsApi, /evidence_events/);
   assert.match(recordsApi, /too_many_images/);
   assert.match(schema, /journal_entries/);
-  assert.match(schema, /journal_images/);
   assert.match(schema, /record_images/);
-  assert.match(schema, /preferred_weekday/);
-  assert.match(schema, /preferred_month_day/);
-  assert.match(taskScheduling, /本周择时/);
-  assert.match(taskScheduling, /isoDate < planning\.weekStart/);
-  assert.match(lifeOS, /历史周计划/);
-  assert.match(lifeOS, /月末结算/);
-  assert.equal([...visionJourneys.matchAll(/^\s+\[\d+,/gm)].length, 100);
-  assert.match(visionJourneys, /完成40岁人生复盘与下一阶段愿景/);
+  assert.match(schema, /journey_stages_v2/);
+  assert.match(schema, /task_instances_v2/);
+  assert.match(schema, /planning_reports_v2/);
+  assert.match(migration, /CREATE TABLE IF NOT EXISTS journey_stages_v2/);
+  assert.match(migration, /idx_instances_v2_occurrence/);
   assert.match(hosting, /"d1": "DB"/);
   assert.match(hosting, /"r2": "MEDIA"/);
 });

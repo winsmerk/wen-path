@@ -189,3 +189,31 @@ export const recordImages = sqliteTable("record_images", {
   id: text("id").primaryKey(), recordType: text("record_type").notNull(), recordId: text("record_id").notNull(), userId: text("user_id").notNull(),
   objectKey: text("object_key").notNull(), contentType: text("content_type").notNull(), createdAt: text("created_at").notNull(),
 }, (table) => [index("idx_record_images_record").on(table.userId, table.recordType, table.recordId)]);
+
+export const journeyStagesV2 = sqliteTable("journey_stages_v2", {
+  id:text("id").primaryKey(),userId:text("user_id").notNull(),title:text("title").notNull(),objective:text("objective").notNull().default(""),status:text("status").notNull().default("planned"),sortOrder:integer("sort_order").notNull().default(1),startDate:text("start_date"),endDate:text("end_date"),createdAt:text("created_at").notNull(),updatedAt:text("updated_at").notNull(),
+},(table)=>[index("idx_stages_v2_user_sort").on(table.userId,table.sortOrder)]);
+export const journeyGoalsV2 = sqliteTable("journey_goals_v2", {
+  id:text("id").primaryKey(),userId:text("user_id").notNull(),stageId:text("stage_id").notNull(),title:text("title").notNull(),description:text("description").notNull().default(""),acceptanceCriteria:text("acceptance_criteria").notNull().default(""),priority:integer("priority").notNull().default(2),status:text("status").notNull().default("planned"),sortOrder:integer("sort_order").notNull().default(1),startDate:text("start_date"),endDate:text("end_date"),createdAt:text("created_at").notNull(),updatedAt:text("updated_at").notNull(),
+},(table)=>[index("idx_goals_v2_stage_sort").on(table.userId,table.stageId,table.sortOrder)]);
+export const taskTypesV2 = sqliteTable("task_types_v2", {
+  id:text("id").primaryKey(),userId:text("user_id").notNull(),typeKey:text("type_key").notNull(),name:text("name").notNull(),color:text("color").notNull(),icon:text("icon").notNull(),sortOrder:integer("sort_order").notNull().default(1),enabled:integer("enabled",{mode:"boolean"}).notNull().default(true),createdAt:text("created_at").notNull(),updatedAt:text("updated_at").notNull(),
+},(table)=>[uniqueIndex("idx_task_types_v2_key").on(table.userId,table.typeKey)]);
+export const taskDefinitionsV2 = sqliteTable("task_definitions_v2", {
+  id:text("id").primaryKey(),userId:text("user_id").notNull(),goalId:text("goal_id").notNull(),title:text("title").notNull(),description:text("description").notNull().default(""),typeKey:text("type_key").notNull().default("other"),mode:text("mode").notNull().default("once"),frequency:text("frequency").notNull().default("once"),occurrences:integer("occurrences").notNull().default(1),weekdaysJson:text("weekdays_json").notNull().default("[]"),monthDaysJson:text("month_days_json").notNull().default("[]"),timesJson:text("times_json").notNull().default("[]"),scheduledDate:text("scheduled_date"),startDate:text("start_date"),endDate:text("end_date"),estimatedMinutes:integer("estimated_minutes").notNull().default(30),priority:integer("priority").notNull().default(2),enabled:integer("enabled",{mode:"boolean"}).notNull().default(true),createdAt:text("created_at").notNull(),updatedAt:text("updated_at").notNull(),
+},(table)=>[index("idx_tasks_v2_goal").on(table.userId,table.goalId)]);
+export const monthlyPlansV2 = sqliteTable("monthly_plans_v2", {
+  id:text("id").primaryKey(),userId:text("user_id").notNull(),period:text("period").notNull(),title:text("title").notNull().default(""),status:text("status").notNull().default("active"),createdAt:text("created_at").notNull(),updatedAt:text("updated_at").notNull(),
+},(table)=>[uniqueIndex("idx_month_plan_v2_period").on(table.userId,table.period)]);
+export const monthlyPlanGoalsV2 = sqliteTable("monthly_plan_goals_v2", {
+  id:text("id").primaryKey(),userId:text("user_id").notNull(),planId:text("plan_id").notNull(),goalId:text("goal_id").notNull(),priority:integer("priority").notNull().default(2),createdAt:text("created_at").notNull(),
+},(table)=>[uniqueIndex("idx_month_goal_v2").on(table.userId,table.planId,table.goalId)]);
+export const taskInstancesV2 = sqliteTable("task_instances_v2", {
+  id:text("id").primaryKey(),userId:text("user_id").notNull(),planId:text("plan_id").notNull(),goalId:text("goal_id").notNull(),definitionId:text("definition_id").notNull(),title:text("title").notNull(),typeKey:text("type_key").notNull(),scheduledDate:text("scheduled_date").notNull(),scheduledTime:text("scheduled_time").notNull().default(""),estimatedMinutes:integer("estimated_minutes").notNull().default(30),priority:integer("priority").notNull().default(2),status:text("status").notNull().default("pending"),source:text("source").notNull().default("system"),userAdjusted:integer("user_adjusted",{mode:"boolean"}).notNull().default(false),occurrenceKey:text("occurrence_key").notNull(),completedAt:text("completed_at"),createdAt:text("created_at").notNull(),updatedAt:text("updated_at").notNull(),
+},(table)=>[uniqueIndex("idx_instances_v2_occurrence").on(table.userId,table.occurrenceKey),index("idx_instances_v2_date").on(table.userId,table.scheduledDate,table.status)]);
+export const weeklyCapacityDaysV2 = sqliteTable("weekly_capacity_days_v2", {
+  id:text("id").primaryKey(),userId:text("user_id").notNull(),weekday:integer("weekday").notNull(),available:integer("available",{mode:"boolean"}).notNull().default(true),minutes:integer("minutes").notNull().default(60),slotsJson:text("slots_json").notNull().default("[]"),updatedAt:text("updated_at").notNull(),
+},(table)=>[uniqueIndex("idx_capacity_v2_day").on(table.userId,table.weekday)]);
+export const planningReportsV2 = sqliteTable("planning_reports_v2", {
+  id:text("id").primaryKey(),userId:text("user_id").notNull(),reportType:text("report_type").notNull(),period:text("period").notNull(),status:text("status").notNull().default("final"),summaryJson:text("summary_json").notNull(),generatedAt:text("generated_at").notNull(),updatedAt:text("updated_at").notNull(),
+},(table)=>[uniqueIndex("idx_reports_v2_period").on(table.userId,table.reportType,table.period)]);
