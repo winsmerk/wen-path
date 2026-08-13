@@ -329,9 +329,10 @@ export async function POST(request: Request) {
     await db.prepare("UPDATE profiles SET initialized = 1, updated_at = ? WHERE user_id = ?").bind(now, identity.userId).run();
   } else if (body.action === "clear-legacy-planning-data") {
     if (body.confirm !== "CLEAR_LEGACY_PLANS") return NextResponse.json({ error: "confirmation_required" }, { status: 400 });
+    const legacyPrefix=`${identity.userId}-wen-40-journey-v1-%`;
     const [journeysCount,tasksCount,outcomesCount,actionsCount,cyclesCount]=await Promise.all([
-      db.prepare("SELECT COUNT(*) AS total FROM journeys WHERE user_id=? AND deleted_at IS NULL").bind(identity.userId).first<{total:number}>(),
-      db.prepare("SELECT COUNT(*) AS total FROM journey_tasks WHERE user_id=?").bind(identity.userId).first<{total:number}>(),
+      db.prepare("SELECT COUNT(*) AS total FROM journeys WHERE user_id=? AND id LIKE ? AND deleted_at IS NULL").bind(identity.userId,legacyPrefix).first<{total:number}>(),
+      db.prepare("SELECT COUNT(*) AS total FROM journey_tasks WHERE user_id=? AND journey_id LIKE ?").bind(identity.userId,legacyPrefix).first<{total:number}>(),
       db.prepare("SELECT COUNT(*) AS total FROM monthly_outcomes WHERE user_id=?").bind(identity.userId).first<{total:number}>(),
       db.prepare("SELECT COUNT(*) AS total FROM weekly_actions WHERE user_id=?").bind(identity.userId).first<{total:number}>(),
       db.prepare("SELECT COUNT(*) AS total FROM weekly_cycles WHERE user_id=?").bind(identity.userId).first<{total:number}>(),
@@ -341,8 +342,8 @@ export async function POST(request: Request) {
       db.prepare("DELETE FROM weekly_actions WHERE user_id=?").bind(identity.userId),
       db.prepare("DELETE FROM monthly_outcomes WHERE user_id=?").bind(identity.userId),
       db.prepare("DELETE FROM weekly_cycles WHERE user_id=?").bind(identity.userId),
-      db.prepare("DELETE FROM journey_tasks WHERE user_id=?").bind(identity.userId),
-      db.prepare("DELETE FROM journeys WHERE user_id=?").bind(identity.userId),
+      db.prepare("DELETE FROM journey_tasks WHERE user_id=? AND journey_id LIKE ?").bind(identity.userId,legacyPrefix),
+      db.prepare("DELETE FROM journeys WHERE user_id=? AND id LIKE ?").bind(identity.userId,legacyPrefix),
       db.prepare("INSERT INTO journeys (id,user_id,sequence_number,title,area,stage,acceptance_criteria,status,progress,next_action,deleted_at) VALUES (?,?,100,'旧版关卡数据已清除','探索与生活','已清除','仅用于阻止旧版种子数据再次导入','paused',0,'',?)").bind(markerId,identity.userId,now),
     ]);
     return NextResponse.json({ok:true,deleted:{journeys:Number(journeysCount?.total||0),journeyTasks:Number(tasksCount?.total||0),monthlyOutcomes:Number(outcomesCount?.total||0),weeklyActions:Number(actionsCount?.total||0),weeklyCycles:Number(cyclesCount?.total||0)}});
