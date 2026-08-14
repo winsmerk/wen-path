@@ -71,6 +71,9 @@ test("ships vision journey planning, reporting, and durable data declarations", 
   assert.match(planningUI, /月计划已生成，周计划和每日待办已同步更新/);
   assert.match(planningUI, /本周负载/);
   assert.match(planningUI, /勾选本周要完成的任务/);
+  assert.match(planningUI, /taskModeLabel/);
+  assert.match(planningUI, /开始时间/);
+  assert.match(planningUI, /完成时间/);
   assert.match(planningUI, /set-week-selection/);
   assert.match(planningUI, /每周可用时间/);
   assert.match(planningUI, /周报与月报/);
