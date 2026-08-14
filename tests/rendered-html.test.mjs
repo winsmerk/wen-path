@@ -81,6 +81,7 @@ test("ships vision journey planning, reporting, and durable data declarations", 
   assert.match(planningUI, /暂无已开始的阶段/);
   assert.match(planningUI, /苏东坡 · 每日一句/);
   assert.match(planningUI, /dailySuShiQuote/);
+  assert.doesNotMatch(planningUI, /<h1>今日待办<\/h1>/);
   assert.match(quotes, /临江仙·送钱穆父/);
   assert.match(planningUI, /set-week-selection/);
   assert.match(planningUI, /每周可用时间/);
