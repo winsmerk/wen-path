@@ -74,6 +74,8 @@ test("ships vision journey planning, reporting, and durable data declarations", 
   assert.match(planningUI, /taskModeLabel/);
   assert.match(planningUI, /开始时间/);
   assert.match(planningUI, /完成时间/);
+  assert.match(planningUI, /month-stage-dates/);
+  assert.match(planningUI, /month-goal-dates/);
   assert.match(planningUI, /set-week-selection/);
   assert.match(planningUI, /每周可用时间/);
   assert.match(planningUI, /周报与月报/);
