@@ -26,19 +26,21 @@ test("renders the LifeOS application shell", async () => {
 
 test("ships vision journey planning, reporting, and durable data declarations", async () => {
   const { readFile } = await import("node:fs/promises");
-  const [layout, page, lifeOS, planningUI, workspaceApi, planningApi, planningLib, journalApi, recordsApi, schema, workspaceLib, migration, hosting] = await Promise.all([
+  const [layout, page, lifeOS, planningUI, workspaceApi, planningApi, planningRecordsApi, planningLib, journalApi, recordsApi, schema, workspaceLib, migration, recordsMigration, hosting] = await Promise.all([
     readFile(new URL("app/layout.tsx", templateRoot), "utf8"),
     readFile(new URL("app/page.tsx", templateRoot), "utf8"),
     readFile(new URL("app/LifeOS.tsx", templateRoot), "utf8"),
     readFile(new URL("app/PlanningSystem.tsx", templateRoot), "utf8"),
     readFile(new URL("app/api/workspace/route.ts", templateRoot), "utf8"),
     readFile(new URL("app/api/planning/route.ts", templateRoot), "utf8"),
+    readFile(new URL("app/api/planning-records/route.ts", templateRoot), "utf8"),
     readFile(new URL("lib/planning.ts", templateRoot), "utf8"),
     readFile(new URL("app/api/journal/route.ts", templateRoot), "utf8"),
     readFile(new URL("app/api/records/route.ts", templateRoot), "utf8"),
     readFile(new URL("db/schema.ts", templateRoot), "utf8"),
     readFile(new URL("lib/workspace.ts", templateRoot), "utf8"),
     readFile(new URL("drizzle/0016_vision_journey_planning.sql", templateRoot), "utf8"),
+    readFile(new URL("drizzle/0017_task_records.sql", templateRoot), "utf8"),
     readFile(new URL(".openai/hosting.json", templateRoot), "utf8"),
   ]);
   assert.match(layout, /const title = "wen flow · Build a life you love\."/);
@@ -50,12 +52,16 @@ test("ships vision journey planning, reporting, and durable data declarations", 
   assert.match(lifeOS, /目标日期（可选）/);
   assert.match(lifeOS, /当前财务情况/);
   assert.match(lifeOS, /English Coach/);
+  assert.match(lifeOS, /key: "tools"/);
+  assert.match(lifeOS, /按任务类型归档的完成记录/);
   assert.doesNotMatch(lifeOS, /key: "footprints"/);
   assert.match(planningUI, /新增阶段/);
   assert.match(planningUI, /阶段目标/);
   assert.match(planningUI, /添加任务/);
   assert.match(planningUI, /单次任务/);
   assert.match(planningUI, /周期任务/);
+  assert.match(planningUI, /完成任务时必须提交记录/);
+  assert.match(planningUI, /保存记录并完成任务/);
   assert.match(planningUI, /每天/);
   assert.match(planningUI, /每周/);
   assert.match(planningUI, /每月/);
@@ -76,6 +82,9 @@ test("ships vision journey planning, reporting, and durable data declarations", 
   assert.match(planningApi, /delete-task/);
   assert.match(planningApi, /save-month-plan/);
   assert.match(planningApi, /update-instance/);
+  assert.match(planningApi, /record_required/);
+  assert.match(planningRecordsApi, /planning_records_v2/);
+  assert.match(planningRecordsApi, /planning_record/);
   assert.match(planningApi, /capacity-settings/);
   assert.match(planningLib, /generatePlanInstances/);
   assert.match(planningLib, /INSERT OR IGNORE INTO task_instances_v2/);
@@ -105,8 +114,10 @@ test("ships vision journey planning, reporting, and durable data declarations", 
   assert.match(schema, /journey_stages_v2/);
   assert.match(schema, /task_instances_v2/);
   assert.match(schema, /planning_reports_v2/);
+  assert.match(schema, /planning_records_v2/);
   assert.match(migration, /CREATE TABLE IF NOT EXISTS journey_stages_v2/);
   assert.match(migration, /idx_instances_v2_occurrence/);
+  assert.match(recordsMigration, /ALTER TABLE task_definitions_v2 ADD COLUMN record_required/);
   assert.match(hosting, /"d1": "DB"/);
   assert.match(hosting, /"r2": "MEDIA"/);
 });

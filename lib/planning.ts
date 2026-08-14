@@ -40,8 +40,13 @@ export async function ensurePlanningSchema(db: D1Database) {
       frequency TEXT NOT NULL DEFAULT 'once', occurrences INTEGER NOT NULL DEFAULT 1,
       weekdays_json TEXT NOT NULL DEFAULT '[]', month_days_json TEXT NOT NULL DEFAULT '[]', times_json TEXT NOT NULL DEFAULT '[]',
       scheduled_date TEXT, start_date TEXT, end_date TEXT, estimated_minutes INTEGER NOT NULL DEFAULT 30,
-      priority INTEGER NOT NULL DEFAULT 2, enabled INTEGER NOT NULL DEFAULT 1,
+      priority INTEGER NOT NULL DEFAULT 2, record_required INTEGER NOT NULL DEFAULT 0, enabled INTEGER NOT NULL DEFAULT 1,
       created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+    )`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS planning_records_v2 (
+      id TEXT PRIMARY KEY, user_id TEXT NOT NULL, instance_id TEXT NOT NULL, type_key TEXT NOT NULL,
+      title TEXT NOT NULL, content TEXT NOT NULL DEFAULT '', duration INTEGER NOT NULL DEFAULT 0,
+      feeling TEXT NOT NULL DEFAULT '', recorded_at TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
     )`),
     db.prepare(`CREATE TABLE IF NOT EXISTS monthly_plans_v2 (
       id TEXT PRIMARY KEY, user_id TEXT NOT NULL, period TEXT NOT NULL, title TEXT NOT NULL DEFAULT '',
@@ -77,6 +82,8 @@ export async function ensurePlanningSchema(db: D1Database) {
     db.prepare("CREATE INDEX IF NOT EXISTS idx_instances_v2_date ON task_instances_v2(user_id,scheduled_date,status)"),
     db.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_capacity_v2_day ON weekly_capacity_days_v2(user_id,weekday)"),
     db.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_reports_v2_period ON planning_reports_v2(user_id,report_type,period)"),
+    db.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_planning_records_instance ON planning_records_v2(user_id,instance_id)"),
+    db.prepare("CREATE INDEX IF NOT EXISTS idx_planning_records_type_date ON planning_records_v2(user_id,type_key,recorded_at)"),
   ]);
   await db.prepare("PRAGMA optimize").run();
 }
@@ -185,18 +192,19 @@ export async function planningSnapshot(db:D1Database,userId:string) {
   const {localDate,weekStart,weekEnd,month}=executionPeriods();
   await generatePlanInstances(db,userId,month);
   await generateReports(db,userId);
-  const [stages,goals,tasks,types,plans,planGoals,instances,capacity,reports]=await Promise.all([
+  const [stages,goals,tasks,types,plans,planGoals,instances,capacity,reports,records]=await Promise.all([
     db.prepare("SELECT * FROM journey_stages_v2 WHERE user_id=? ORDER BY sort_order,created_at").bind(userId).all(),
     db.prepare("SELECT * FROM journey_goals_v2 WHERE user_id=? ORDER BY sort_order,created_at").bind(userId).all(),
     db.prepare("SELECT * FROM task_definitions_v2 WHERE user_id=? ORDER BY priority,created_at").bind(userId).all(),
     db.prepare("SELECT * FROM task_types_v2 WHERE user_id=? ORDER BY sort_order").bind(userId).all(),
     db.prepare("SELECT * FROM monthly_plans_v2 WHERE user_id=? ORDER BY period DESC").bind(userId).all(),
     db.prepare("SELECT * FROM monthly_plan_goals_v2 WHERE user_id=? ORDER BY priority,created_at").bind(userId).all(),
-    db.prepare("SELECT * FROM task_instances_v2 WHERE user_id=? AND scheduled_date>=date(?,'start of month','-1 month') AND scheduled_date<=date(?,'start of month','+2 month','-1 day') ORDER BY scheduled_date,CASE WHEN scheduled_time='' THEN 1 ELSE 0 END,scheduled_time,priority,created_at").bind(userId,localDate,localDate).all(),
+    db.prepare("SELECT i.*,COALESCE(d.record_required,0) AS record_required,r.id AS record_id FROM task_instances_v2 i LEFT JOIN task_definitions_v2 d ON d.id=i.definition_id AND d.user_id=i.user_id LEFT JOIN planning_records_v2 r ON r.instance_id=i.id AND r.user_id=i.user_id WHERE i.user_id=? AND i.scheduled_date>=date(?,'start of month','-1 month') AND i.scheduled_date<=date(?,'start of month','+2 month','-1 day') ORDER BY i.scheduled_date,CASE WHEN i.scheduled_time='' THEN 1 ELSE 0 END,i.scheduled_time,i.priority,i.created_at").bind(userId,localDate,localDate).all(),
     db.prepare("SELECT * FROM weekly_capacity_days_v2 WHERE user_id=? ORDER BY weekday").bind(userId).all(),
     db.prepare("SELECT * FROM planning_reports_v2 WHERE user_id=? ORDER BY period DESC LIMIT 24").bind(userId).all(),
+    db.prepare("SELECT * FROM planning_records_v2 WHERE user_id=? ORDER BY recorded_at DESC,created_at DESC LIMIT 500").bind(userId).all(),
   ]);
-  return {stages:stages.results,goals:goals.results,tasks:tasks.results,taskTypes:types.results,monthlyPlans:plans.results,monthlyPlanGoals:planGoals.results,taskInstances:instances.results,capacityDays:capacity.results,reports:reports.results,calendar:{localDate,weekStart,weekEnd,month}};
+  return {stages:stages.results,goals:goals.results,tasks:tasks.results,taskTypes:types.results,monthlyPlans:plans.results,monthlyPlanGoals:planGoals.results,taskInstances:instances.results,capacityDays:capacity.results,reports:reports.results,records:records.results,calendar:{localDate,weekStart,weekEnd,month}};
 }
 
 export function weekHealth(instances:Array<{scheduled_date:string;estimated_minutes:number;status:string}>,capacityDays:Array<{available:number;minutes:number}>,weekStart:string,weekEnd:string,fallback=420) {
