@@ -26,7 +26,7 @@ test("renders the LifeOS application shell", async () => {
 
 test("ships vision journey planning, reporting, and durable data declarations", async () => {
   const { readFile } = await import("node:fs/promises");
-  const [layout, page, lifeOS, planningUI, workspaceApi, planningApi, planningRecordsApi, planningLib, journalApi, recordsApi, schema, workspaceLib, migration, recordsMigration, weekSelectionMigration, hosting] = await Promise.all([
+  const [layout, page, lifeOS, planningUI, workspaceApi, planningApi, planningRecordsApi, planningLib, journalApi, recordsApi, schema, workspaceLib, migration, recordsMigration, weekSelectionMigration, quotes, hosting] = await Promise.all([
     readFile(new URL("app/layout.tsx", templateRoot), "utf8"),
     readFile(new URL("app/page.tsx", templateRoot), "utf8"),
     readFile(new URL("app/LifeOS.tsx", templateRoot), "utf8"),
@@ -42,6 +42,7 @@ test("ships vision journey planning, reporting, and durable data declarations", 
     readFile(new URL("drizzle/0016_vision_journey_planning.sql", templateRoot), "utf8"),
     readFile(new URL("drizzle/0017_task_records.sql", templateRoot), "utf8"),
     readFile(new URL("drizzle/0018_week_task_selection.sql", templateRoot), "utf8"),
+    readFile(new URL("lib/su-shi-quotes.ts", templateRoot), "utf8"),
     readFile(new URL(".openai/hosting.json", templateRoot), "utf8"),
   ]);
   assert.match(layout, /const title = "wen flow · Build a life you love\."/);
@@ -78,6 +79,9 @@ test("ships vision journey planning, reporting, and durable data declarations", 
   assert.match(planningUI, /month-goal-dates/);
   assert.match(planningUI, /stage\.status==="active"/);
   assert.match(planningUI, /暂无已开始的阶段/);
+  assert.match(planningUI, /苏东坡 · 每日一句/);
+  assert.match(planningUI, /dailySuShiQuote/);
+  assert.match(quotes, /临江仙·送钱穆父/);
   assert.match(planningUI, /set-week-selection/);
   assert.match(planningUI, /每周可用时间/);
   assert.match(planningUI, /周报与月报/);

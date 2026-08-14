@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useState } from "react";
+import { dailySuShiQuote } from "@/lib/su-shi-quotes";
 
 export type Stage={id:string;title:string;objective:string;status:"planned"|"active"|"completed"|"paused";sort_order:number;start_date:string|null;end_date:string|null};
 export type Goal={id:string;stage_id:string;title:string;description:string;acceptance_criteria:string;priority:number;status:"planned"|"active"|"completed"|"paused";sort_order:number;start_date:string|null;end_date:string|null};
@@ -26,9 +27,10 @@ function safeList(value:string){try{const result=JSON.parse(value);return Array.
 export function PlanningToday({data,busy,mutate,onRecordsChanged}:{data:PlanningData;busy:boolean;mutate:PlanningMutate;onRecordsChanged:()=>Promise<void>}){
   const today=data.taskInstances.filter((item)=>item.scheduled_date===data.calendar.localDate&&item.week_selected!==0).sort(compareTasks);
   const week=data.taskInstances.filter((item)=>item.scheduled_date>=data.calendar.weekStart&&item.scheduled_date<=data.calendar.weekEnd&&item.status!=="completed"&&item.week_selected!==0).sort(compareTasks);
-  const configured=data.capacityDays.reduce((sum,item)=>sum+(item.available?item.minutes:0),0)||420,planned=week.reduce((sum,item)=>sum+item.estimated_minutes,0),load=Math.round(planned/configured*100),health=load<=80?"健康":load<=100?"偏满":load<=120?"超额":"严重超额";
+  const configured=data.capacityDays.reduce((sum,item)=>sum+(item.available?item.minutes:0),0)||420,planned=week.reduce((sum,item)=>sum+item.estimated_minutes,0),load=Math.round(planned/configured*100),health=load<=80?"健康":load<=100?"偏满":load<=120?"超额":"严重超额",quote=dailySuShiQuote(data.calendar.localDate);
   return <>
     <header className="page-header"><div><p>今天，把重要的事落到行动里</p><h1>今日待办</h1></div><div className={`load-badge load-${health}`}>{health} · {load}%</div></header>
+    <section className="daily-poetry" aria-label="苏东坡每日一句"><span className="poetry-seal">苏</span><div><small>苏东坡 · 每日一句</small><blockquote>“{quote.text}”</blockquote><cite>—— 苏轼 {quote.source}</cite></div></section>
     <section className="today-planning-grid">
       <div className="planning-panel"><div className="panel-heading"><div><span className="eyebrow">今天</span><h3>{today.length} 项待办</h3></div><span>{today.filter((item)=>item.status==="completed").length}/{today.length} 完成</span></div>
         <div className="instance-list">{today.length?today.map((item)=><InstanceRow key={item.id} item={item} data={data} busy={busy} mutate={mutate} onRecordsChanged={onRecordsChanged}/>):<div className="empty-list"><b>今天没有待办</b><p>在月计划中选择目标后，系统会自动安排任务。</p></div>}</div>
