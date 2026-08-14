@@ -79,6 +79,8 @@ test("ships vision journey planning, reporting, and durable data declarations", 
   assert.match(planningUI, /month-goal-dates/);
   assert.match(planningUI, /stage\.status==="active"/);
   assert.match(planningUI, /暂无已开始的阶段/);
+  assert.match(planningUI, /手动添加本周任务/);
+  assert.match(planningUI, /添加到本周/);
   assert.match(planningUI, /苏东坡 · 每日一句/);
   assert.match(planningUI, /dailySuShiQuote/);
   assert.doesNotMatch(planningUI, /<h1>今日待办<\/h1>/);
@@ -99,6 +101,8 @@ test("ships vision journey planning, reporting, and durable data declarations", 
   assert.match(planningApi, /s\.status='active'/);
   assert.match(planningApi, /update-instance/);
   assert.match(planningApi, /set-week-selection/);
+  assert.match(planningApi, /add-week-task/);
+  assert.match(planningApi, /source,user_adjusted,week_selected/);
   assert.match(planningApi, /record_required/);
   assert.match(planningRecordsApi, /planning_records_v2/);
   assert.match(planningRecordsApi, /planning_record/);

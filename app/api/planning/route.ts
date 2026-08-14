@@ -75,6 +75,14 @@ export async function POST(request:Request){
     if(nextStatus==="completed"&&current.record_required&&!current.record_id)return NextResponse.json({error:"record_required"},{status:409});
     await db.prepare("UPDATE task_instances_v2 SET status=?,scheduled_date=COALESCE(NULLIF(?,''),scheduled_date),scheduled_time=?,priority=?,user_adjusted=1,completed_at=?,updated_at=? WHERE id=? AND user_id=?").bind(nextStatus,date,time,priority,nextStatus==="completed"?now:null,now,id,userId).run();
     const instance=await db.prepare("SELECT goal_id FROM task_instances_v2 WHERE id=? AND user_id=?").bind(id,userId).first<{goal_id:string}>();if(instance)await syncPlanningProgress(db,userId,instance.goal_id,now);
+  } else if(action==="add-week-task"){
+    const title=clean(body.title,160),typeKey=clean(body.typeKey,40),goalId=clean(body.goalId,100),scheduledDate=clean(body.scheduledDate,10),scheduledTime=clean(body.scheduledTime,5),minutes=Math.max(5,Math.min(1440,Number(body.estimatedMinutes)||30)),priority=Math.max(1,Math.min(3,Number(body.priority)||2)),{weekStart,weekEnd,month}=executionPeriods();
+    const type=await db.prepare("SELECT id FROM task_types_v2 WHERE user_id=? AND type_key=? AND enabled=1").bind(userId,typeKey).first();
+    const goal=goalId?await db.prepare("SELECT g.id FROM journey_goals_v2 g JOIN journey_stages_v2 s ON s.id=g.stage_id AND s.user_id=g.user_id WHERE g.id=? AND g.user_id=? AND g.status!='completed' AND s.status='active'").bind(goalId,userId).first():null;
+    if(!title||!type||(goalId&&!goal)||!validDate(scheduledDate)||scheduledDate<weekStart||scheduledDate>weekEnd||(scheduledTime&&!/^([01]\d|2[0-3]):[0-5]\d$/.test(scheduledTime)))return NextResponse.json({error:"invalid_week_task"},{status:400});
+    const plan=await db.prepare("SELECT id FROM monthly_plans_v2 WHERE user_id=? AND period=? LIMIT 1").bind(userId,month).first<{id:string}>(),id=crypto.randomUUID();
+    await db.prepare(`INSERT INTO task_instances_v2 (id,user_id,plan_id,goal_id,definition_id,title,type_key,scheduled_date,scheduled_time,estimated_minutes,priority,status,source,user_adjusted,week_selected,occurrence_key,created_at,updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,'pending','manual',1,1,?,?,?)`).bind(id,userId,plan?.id||"",goalId||"","",title,typeKey,scheduledDate,scheduledTime,minutes,priority,`manual:${id}`,now,now).run();
   } else if(action==="set-week-selection"){
     const id=clean(body.id,100),selected=body.selected===true?1:0,{weekStart,weekEnd}=executionPeriods();
     const result=await db.prepare("UPDATE task_instances_v2 SET week_selected=?,updated_at=? WHERE id=? AND user_id=? AND scheduled_date>=? AND scheduled_date<=?").bind(selected,now,id,userId,weekStart,weekEnd).run();
