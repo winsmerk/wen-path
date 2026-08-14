@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getD1, getWorkspaceIdentity } from "@/lib/workspace";
+import { executionPeriods, getD1, getWorkspaceIdentity } from "@/lib/workspace";
 import { ensurePlanningDerivedData, ensurePlanningSchema, generatePlanInstances, generateReports, planningSnapshot, seedPlanningTypes, syncPlanningProgress } from "@/lib/planning";
 
 export const dynamic = "force-dynamic";
@@ -74,6 +74,10 @@ export async function POST(request:Request){
     if(nextStatus==="completed"&&current.record_required&&!current.record_id)return NextResponse.json({error:"record_required"},{status:409});
     await db.prepare("UPDATE task_instances_v2 SET status=?,scheduled_date=COALESCE(NULLIF(?,''),scheduled_date),scheduled_time=?,priority=?,user_adjusted=1,completed_at=?,updated_at=? WHERE id=? AND user_id=?").bind(nextStatus,date,time,priority,nextStatus==="completed"?now:null,now,id,userId).run();
     const instance=await db.prepare("SELECT goal_id FROM task_instances_v2 WHERE id=? AND user_id=?").bind(id,userId).first<{goal_id:string}>();if(instance)await syncPlanningProgress(db,userId,instance.goal_id,now);
+  } else if(action==="set-week-selection"){
+    const id=clean(body.id,100),selected=body.selected===true?1:0,{weekStart,weekEnd}=executionPeriods();
+    const result=await db.prepare("UPDATE task_instances_v2 SET week_selected=?,updated_at=? WHERE id=? AND user_id=? AND scheduled_date>=? AND scheduled_date<=?").bind(selected,now,id,userId,weekStart,weekEnd).run();
+    if(!result.meta.changes)return NextResponse.json({error:"not_found"},{status:404});
   } else if(action==="capacity-settings"){
     const days=list(body.days,7) as Array<Record<string,unknown>>;for(const day of days){const weekday=Math.max(1,Math.min(7,Number(day.weekday)||1)),available=day.available===false?0:1,minutes=Math.max(0,Math.min(1440,Number(day.minutes)||0)),slots=list(day.slots,8).map((item)=>clean(item,20));await db.prepare("UPDATE weekly_capacity_days_v2 SET available=?,minutes=?,slots_json=?,updated_at=? WHERE user_id=? AND weekday=?").bind(available,minutes,JSON.stringify(slots),now,userId,weekday).run();}
   } else if(action==="refresh-reports"){

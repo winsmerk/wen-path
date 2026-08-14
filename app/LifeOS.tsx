@@ -276,7 +276,7 @@ export default function LifeOS() {
         {tab === "today" && <PlanningToday data={planning} busy={saving} mutate={mutatePlanning} onRecordsChanged={load}/>}
         {tab === "vision" && <Vision profile={workspace.profile} planning={planning} busy={saving} mutate={mutate} />}
         {tab === "journey" && <JourneyManager data={planning} busy={saving} mutate={mutatePlanning}/>}
-        {tab === "plan" && <PlanManager data={planning} busy={saving} mutate={mutatePlanning}/>}
+        {tab === "plan" && <PlanManager data={planning} busy={saving} mutate={mutatePlanning} onRecordsChanged={load}/>}
         {tab === "records" && <Records items={workspace.checkins} outputs={workspace.taskOutputs} planningRecords={planning.records} taskTypes={planning.taskTypes} journals={workspace.journalEntries} journalImages={workspace.journalImages} recordImages={workspace.recordImages} onReload={load} />}
         {tab === "finance" && <Finance records={workspace.financialRecords} bills={workspace.financialMonthlyBills} busy={saving} mutate={mutate} />}
         {tab === "tools" && <Tools messages={workspace.englishMessages} busy={saving} mutate={mutate} />}

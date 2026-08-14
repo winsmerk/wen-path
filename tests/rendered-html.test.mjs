@@ -26,7 +26,7 @@ test("renders the LifeOS application shell", async () => {
 
 test("ships vision journey planning, reporting, and durable data declarations", async () => {
   const { readFile } = await import("node:fs/promises");
-  const [layout, page, lifeOS, planningUI, workspaceApi, planningApi, planningRecordsApi, planningLib, journalApi, recordsApi, schema, workspaceLib, migration, recordsMigration, hosting] = await Promise.all([
+  const [layout, page, lifeOS, planningUI, workspaceApi, planningApi, planningRecordsApi, planningLib, journalApi, recordsApi, schema, workspaceLib, migration, recordsMigration, weekSelectionMigration, hosting] = await Promise.all([
     readFile(new URL("app/layout.tsx", templateRoot), "utf8"),
     readFile(new URL("app/page.tsx", templateRoot), "utf8"),
     readFile(new URL("app/LifeOS.tsx", templateRoot), "utf8"),
@@ -41,6 +41,7 @@ test("ships vision journey planning, reporting, and durable data declarations", 
     readFile(new URL("lib/workspace.ts", templateRoot), "utf8"),
     readFile(new URL("drizzle/0016_vision_journey_planning.sql", templateRoot), "utf8"),
     readFile(new URL("drizzle/0017_task_records.sql", templateRoot), "utf8"),
+    readFile(new URL("drizzle/0018_week_task_selection.sql", templateRoot), "utf8"),
     readFile(new URL(".openai/hosting.json", templateRoot), "utf8"),
   ]);
   assert.match(layout, /const title = "wen flow · Build a life you love\."/);
@@ -69,6 +70,8 @@ test("ships vision journey planning, reporting, and durable data declarations", 
   assert.match(planningUI, /选择本月要推进的目标/);
   assert.match(planningUI, /月计划已生成，周计划和每日待办已同步更新/);
   assert.match(planningUI, /本周负载/);
+  assert.match(planningUI, /勾选本周要完成的任务/);
+  assert.match(planningUI, /set-week-selection/);
   assert.match(planningUI, /每周可用时间/);
   assert.match(planningUI, /周报与月报/);
   assert.match(planningUI, /function compareTasks/);
@@ -82,6 +85,7 @@ test("ships vision journey planning, reporting, and durable data declarations", 
   assert.match(planningApi, /delete-task/);
   assert.match(planningApi, /save-month-plan/);
   assert.match(planningApi, /update-instance/);
+  assert.match(planningApi, /set-week-selection/);
   assert.match(planningApi, /record_required/);
   assert.match(planningRecordsApi, /planning_records_v2/);
   assert.match(planningRecordsApi, /planning_record/);
@@ -115,9 +119,11 @@ test("ships vision journey planning, reporting, and durable data declarations", 
   assert.match(schema, /task_instances_v2/);
   assert.match(schema, /planning_reports_v2/);
   assert.match(schema, /planning_records_v2/);
+  assert.match(schema, /week_selected/);
   assert.match(migration, /CREATE TABLE IF NOT EXISTS journey_stages_v2/);
   assert.match(migration, /idx_instances_v2_occurrence/);
   assert.match(recordsMigration, /ALTER TABLE task_definitions_v2 ADD COLUMN record_required/);
+  assert.match(weekSelectionMigration, /ALTER TABLE task_instances_v2 ADD COLUMN week_selected/);
   assert.match(hosting, /"d1": "DB"/);
   assert.match(hosting, /"r2": "MEDIA"/);
 });

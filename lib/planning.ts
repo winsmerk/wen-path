@@ -65,7 +65,7 @@ async function initializePlanningSchema(db: D1Database) {
       definition_id TEXT NOT NULL, title TEXT NOT NULL, type_key TEXT NOT NULL,
       scheduled_date TEXT NOT NULL, scheduled_time TEXT NOT NULL DEFAULT '', estimated_minutes INTEGER NOT NULL DEFAULT 30,
       priority INTEGER NOT NULL DEFAULT 2, status TEXT NOT NULL DEFAULT 'pending', source TEXT NOT NULL DEFAULT 'system',
-      user_adjusted INTEGER NOT NULL DEFAULT 0, occurrence_key TEXT NOT NULL, completed_at TEXT,
+      user_adjusted INTEGER NOT NULL DEFAULT 0, week_selected INTEGER NOT NULL DEFAULT 1, occurrence_key TEXT NOT NULL, completed_at TEXT,
       created_at TEXT NOT NULL, updated_at TEXT NOT NULL
     )`),
     db.prepare(`CREATE TABLE IF NOT EXISTS weekly_capacity_days_v2 (
@@ -89,6 +89,10 @@ async function initializePlanningSchema(db: D1Database) {
     db.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_planning_records_instance ON planning_records_v2(user_id,instance_id)"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_planning_records_type_date ON planning_records_v2(user_id,type_key,recorded_at)"),
   ]);
+  const instanceColumns=await db.prepare("PRAGMA table_info(task_instances_v2)").all<{name:string}>();
+  if(!instanceColumns.results.some((column)=>column.name==="week_selected")){
+    await db.prepare("ALTER TABLE task_instances_v2 ADD COLUMN week_selected INTEGER NOT NULL DEFAULT 1").run();
+  }
   await db.prepare("PRAGMA optimize").run();
 }
 
@@ -198,7 +202,7 @@ export async function generateReports(db:D1Database,userId:string) {
     ["monthly",`${previousMonth}-01`,`${previousMonth}-${String(daysInPeriod(previousMonth)).padStart(2,"0")}`,previousMonth],
   ];
   for(const [type,start,end,period] of periods){
-    const rows=await db.prepare("SELECT status,estimated_minutes,type_key,goal_id FROM task_instances_v2 WHERE user_id=? AND scheduled_date>=? AND scheduled_date<=?").bind(userId,start,end).all<{status:string;estimated_minutes:number;type_key:string;goal_id:string}>();
+    const rows=await db.prepare("SELECT status,estimated_minutes,type_key,goal_id FROM task_instances_v2 WHERE user_id=? AND week_selected=1 AND scheduled_date>=? AND scheduled_date<=?").bind(userId,start,end).all<{status:string;estimated_minutes:number;type_key:string;goal_id:string}>();
     if(!rows.results.length)continue;
     const data=summary(rows.results),timestamp=new Date().toISOString();
     await db.prepare(`INSERT INTO planning_reports_v2 (id,user_id,report_type,period,status,summary_json,generated_at,updated_at)
@@ -249,8 +253,8 @@ export async function planningSnapshot(db:D1Database,userId:string) {
   return {stages:stages.results,goals:goals.results,tasks:tasks.results,taskTypes:types.results,monthlyPlans:plans.results,monthlyPlanGoals:planGoals.results,taskInstances:instances.results,capacityDays:capacity.results,reports:reports.results,records:records.results,calendar:{localDate,weekStart,weekEnd,month}};
 }
 
-export function weekHealth(instances:Array<{scheduled_date:string;estimated_minutes:number;status:string}>,capacityDays:Array<{available:number;minutes:number}>,weekStart:string,weekEnd:string,fallback=420) {
-  const planned=instances.filter((item)=>item.scheduled_date>=weekStart&&item.scheduled_date<=weekEnd&&item.status!=="paused").reduce((sum,item)=>sum+Number(item.estimated_minutes),0);
+export function weekHealth(instances:Array<{scheduled_date:string;estimated_minutes:number;status:string;week_selected?:number}>,capacityDays:Array<{available:number;minutes:number}>,weekStart:string,weekEnd:string,fallback=420) {
+  const planned=instances.filter((item)=>item.scheduled_date>=weekStart&&item.scheduled_date<=weekEnd&&item.status!=="paused"&&item.week_selected!==0).reduce((sum,item)=>sum+Number(item.estimated_minutes),0);
   const configured=capacityDays.reduce((sum,item)=>sum+(item.available?Number(item.minutes):0),0);const capacity=configured||fallback;
   const load=capacity?Math.round(planned/capacity*100):0;const health=load<=80?"healthy":load<=100?"full":load<=120?"over":"severe";
   return {plannedMinutes:planned,capacityMinutes:capacity,remainingMinutes:Math.max(0,capacity-planned),load,health};
