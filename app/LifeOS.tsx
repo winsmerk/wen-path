@@ -173,6 +173,12 @@ export default function LifeOS() {
   const [notice, setNotice] = useState("");
   const [checkinType, setCheckinType] = useState<Checkin["type"] | null>(null);
 
+  const loadWorkspace = useCallback(async () => {
+    const response=await fetch("/api/workspace",{cache:"no-store"});
+    if(!response.ok)throw new Error("无法读取工作台");
+    setWorkspace((await response.json()) as Workspace);
+  },[]);
+
   const load = useCallback(async () => {
     const [workspaceResponse,planningResponse] = await Promise.all([fetch("/api/workspace", { cache: "no-store" }),fetch("/api/planning", { cache: "no-store" })]);
     if (!workspaceResponse.ok||!planningResponse.ok) throw new Error("无法读取工作台");
@@ -216,7 +222,7 @@ export default function LifeOS() {
       setSaving(false);
       return false;
     }
-    await load();
+    await loadWorkspace();
     setSaving(false);
     if (success) {
       setNotice(success);

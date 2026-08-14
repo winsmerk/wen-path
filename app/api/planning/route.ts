@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getD1, getWorkspaceIdentity } from "@/lib/workspace";
-import { ensurePlanningSchema, generatePlanInstances, generateReports, planningSnapshot, seedPlanningTypes, syncPlanningProgress } from "@/lib/planning";
+import { ensurePlanningDerivedData, ensurePlanningSchema, generatePlanInstances, generateReports, planningSnapshot, seedPlanningTypes, syncPlanningProgress } from "@/lib/planning";
 
 export const dynamic = "force-dynamic";
 
@@ -16,6 +16,7 @@ async function prepare(){
 
 export async function GET(){
   const context=await prepare();if(!context)return NextResponse.json({error:"unauthorized"},{status:401});
+  await ensurePlanningDerivedData(context.db,context.identity.userId);
   return NextResponse.json(await planningSnapshot(context.db,context.identity.userId));
 }
 

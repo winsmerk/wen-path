@@ -197,67 +197,6 @@ async function evaluateStopRules(db:D1Database,userId:string) {
   return {decision:reasons.some((item)=>item.severity==="stop")?"stop":reasons.length?"adjust":"continue",reasons};
 }
 
-async function refreshProgress(db: D1Database, userId: string) {
-  const {month}=executionPeriods();
-  const monthStart = `${month}-01`;
-  const monthEnd = `${month}-31T23:59:59`;
-  await db.batch([
-    db.prepare("INSERT OR IGNORE INTO evidence_events (id,user_id,source_type,source_id,evidence_type,action_id,occurred_at,created_at) SELECT 'checkin:'||id,user_id,'checkin',id,type,'',created_at,created_at FROM checkins WHERE user_id=?").bind(userId),
-    db.prepare("INSERT OR IGNORE INTO evidence_events (id,user_id,source_type,source_id,evidence_type,action_id,occurred_at,created_at) SELECT 'task:'||action_id,user_id,'task_output',action_id,task_type,action_id,MIN(created_at),MIN(created_at) FROM task_outputs WHERE user_id=? GROUP BY user_id,action_id,task_type").bind(userId),
-  ]);
-  const [outcomeRows, actionRows, checkinRows, outputRows, journeyRows,journeyTaskRows] = await Promise.all([
-    db.prepare("SELECT id,journey_id,title,acceptance_criteria,progress,kind,source_task_id FROM monthly_outcomes WHERE user_id=? AND status='active' AND period=?").bind(userId,month).all<{id:string;journey_id:string;title:string;acceptance_criteria:string;progress:number;kind:string;source_task_id:string}>(),
-    db.prepare("SELECT a.id,a.outcome_id,a.source_task_id,a.status FROM weekly_actions a LEFT JOIN weekly_cycles c ON c.id=a.cycle_id WHERE a.user_id=? AND c.week_start>=? AND c.week_start<=?").bind(userId,monthStart,`${month}-31`).all<{id:string;outcome_id:string;source_task_id:string;status:string}>(),
-    db.prepare("SELECT evidence_type AS type,COUNT(*) AS total FROM evidence_events WHERE user_id=? AND occurred_at>=? AND occurred_at<=? GROUP BY evidence_type").bind(userId,monthStart,monthEnd).all<{type:string;total:number}>(),
-    db.prepare("SELECT evidence_type AS task_type,COUNT(DISTINCT action_id) AS total FROM evidence_events WHERE user_id=? AND source_type='task_output' AND occurred_at>=? AND occurred_at<=? GROUP BY evidence_type").bind(userId,monthStart,monthEnd).all<{task_type:string;total:number}>(),
-    db.prepare("SELECT id,status,progress FROM journeys WHERE user_id=? AND deleted_at IS NULL").bind(userId).all<{id:string;status:string;progress:number}>(),
-    db.prepare("SELECT id,journey_id,status,execution_frequency FROM journey_tasks WHERE user_id=?").bind(userId).all<{id:string;journey_id:string;status:string;execution_frequency:string}>(),
-  ]);
-  const evidenceCounts = new Map<string,number>();
-  for (const row of checkinRows.results) evidenceCounts.set(row.type, Number(row.total));
-  // Output rows are queried separately to assert action-level de-duplication; the unified evidence count above is authoritative.
-  void outputRows;
-  const outcomeProgress = new Map<string,number>();
-  const updates: D1PreparedStatement[] = [];
-  for (const outcome of outcomeRows.results) {
-    let progress = Number(outcome.progress);
-    if(outcome.source_task_id){
-      const sourceTask=journeyTaskRows.results.find((item)=>item.id===outcome.source_task_id);
-      if(sourceTask?.execution_frequency==="weekly"){
-        const target=Number(`${outcome.title}${outcome.acceptance_criteria}`.match(/(\d+)\s*次/)?.[1]??1);
-        const completed=actionRows.results.filter((item)=>item.source_task_id===outcome.source_task_id&&item.status==="completed").length;
-        progress=Math.min(100,Math.round(completed/Math.max(1,target)*100));
-      } else progress=sourceTask?.status==="completed"?100:0;
-    }
-    else if (outcome.kind === "habit") {
-      const type = /运动|健康/.test(outcome.title) ? "exercise" : /英语|英文|口语/.test(outcome.title) ? "english" : /读书|阅读/.test(outcome.title) ? "reading" : "";
-      const target = Number(`${outcome.title}${outcome.acceptance_criteria}`.match(/(\d+)\s*次/)?.[1] ?? 12);
-      if (type) progress = Math.min(100, Math.round((evidenceCounts.get(type) ?? 0) / target * 100));
-    } else {
-      const linked = actionRows.results.filter((item) => item.outcome_id === outcome.id && item.status !== "paused");
-      if (linked.length) progress = Math.round(linked.filter((item) => item.status === "completed").length / linked.length * 100);
-    }
-    outcomeProgress.set(outcome.id, progress);
-    updates.push(db.prepare("UPDATE monthly_outcomes SET progress=? WHERE id=? AND user_id=?").bind(progress,outcome.id,userId));
-  }
-  for (const journey of journeyRows.results) {
-    const linkedTasks=journeyTaskRows.results.filter((item)=>item.journey_id===journey.id);
-    const linked = outcomeRows.results.filter((item) => item.journey_id === journey.id).map((item) => outcomeProgress.get(item.id) ?? 0);
-    const taskProgress=linkedTasks.map((item)=>{
-      if(item.status==="completed")return 100;
-      if(item.execution_frequency!=="weekly")return 0;
-      const recurringOutcome=outcomeRows.results.find((outcome)=>outcome.source_task_id===item.id);
-      return recurringOutcome?outcomeProgress.get(recurringOutcome.id)??0:0;
-    });
-    const calculated = taskProgress.length?Math.round(taskProgress.reduce((sum,item)=>sum+item,0)/taskProgress.length):linked.length ? Math.round(linked.reduce((sum,item)=>sum+item,0)/linked.length) : journey.progress;
-    const progress = journey.status === "completed" ? 100 : calculated;
-    if (progress !== journey.progress) updates.push(db.prepare("UPDATE journeys SET progress=? WHERE id=? AND user_id=?").bind(progress,journey.id,userId));
-  }
-  const {weekStart}=executionPeriods();
-  updates.push(db.prepare("UPDATE weekly_cycles SET total_count=(SELECT COUNT(*) FROM weekly_actions WHERE user_id=? AND cycle_id=weekly_cycles.id),completed_count=(SELECT COUNT(*) FROM weekly_actions WHERE user_id=? AND cycle_id=weekly_cycles.id AND status='completed') WHERE user_id=? AND week_start=?").bind(userId,userId,userId,weekStart));
-  if (updates.length) await db.batch(updates);
-}
-
 async function activateNextEligibleJourney(db: D1Database, userId: string) {
   const rows = await db.prepare("SELECT id,sequence_number,stage,status FROM journeys WHERE user_id=? AND deleted_at IS NULL ORDER BY sequence_number").bind(userId).all<{id:string;sequence_number:number;stage:string;status:string}>();
   const updates: D1PreparedStatement[] = [];
@@ -269,7 +208,11 @@ async function activateNextEligibleJourney(db: D1Database, userId: string) {
   if (updates.length) await db.batch(updates);
 }
 
+const settledFinancialPeriods = new Set<string>();
+
 async function settleFinancialMonths(db:D1Database,userId:string,currentPeriod:string,now:string) {
+  const cacheKey=`${userId}:${currentPeriod}`;
+  if(settledFinancialPeriods.has(cacheKey))return;
   await db.prepare(`INSERT INTO financial_monthly_bills (id,user_id,period,income_total,salary_income,non_salary_income,expense_total,business_expense,investment_principal,investment_return,business_profit,net_cash_flow,settled_at)
     SELECT ?||':'||substr(recorded_at,1,7),?,substr(recorded_at,1,7),
       SUM(CASE WHEN category='income' THEN amount ELSE 0 END),SUM(CASE WHEN category='income' AND income_type='salary' THEN amount ELSE 0 END),SUM(CASE WHEN category='income' AND income_type='non_salary' THEN amount ELSE 0 END),
@@ -281,39 +224,29 @@ async function settleFinancialMonths(db:D1Database,userId:string,currentPeriod:s
     ON CONFLICT(user_id,period) DO UPDATE SET income_total=excluded.income_total,salary_income=excluded.salary_income,non_salary_income=excluded.non_salary_income,expense_total=excluded.expense_total,business_expense=excluded.business_expense,investment_principal=excluded.investment_principal,investment_return=excluded.investment_return,business_profit=excluded.business_profit,net_cash_flow=excluded.net_cash_flow,settled_at=excluded.settled_at`).bind(userId,userId,now,userId,currentPeriod).run();
   const previousDate=new Date(`${currentPeriod}-01T00:00:00Z`);previousDate.setUTCMonth(previousDate.getUTCMonth()-1);const previousPeriod=previousDate.toISOString().slice(0,7);
   await db.prepare("INSERT OR IGNORE INTO financial_monthly_bills (id,user_id,period,income_total,salary_income,non_salary_income,expense_total,business_expense,investment_principal,investment_return,business_profit,net_cash_flow,settled_at) VALUES (?,?,?,0,0,0,0,0,0,0,0,0,?)").bind(`${userId}:${previousPeriod}`,userId,previousPeriod,now).run();
+  settledFinancialPeriods.add(cacheKey);
 }
 
 export async function GET() {
   const context = await prepare();
   if (!context) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   const { db, identity } = context;
-  await refreshProgress(db, identity.userId);
-  const {month:currentPeriod,weekStart}=executionPeriods();
+  const {month:currentPeriod}=executionPeriods();
   await settleFinancialMonths(db,identity.userId,currentPeriod,new Date().toISOString());
-  const [profile, journeys, journeyTasks, outcomes, outcomeHistory, activeWeek, weeklyCycles, actions, historyActions, checkins, reviews, taskOutputs, financialRecords,financialMonthlyBills, englishMessages, footprints, footprintImages, journalEntries, journalImages, recordImages, stopRuleEvents] = await Promise.all([
+  const [profile, checkins, reviews, taskOutputs, financialRecords,financialMonthlyBills, englishMessages, journalEntries, journalImages, recordImages, stopRuleEvents] = await Promise.all([
     db.prepare("SELECT * FROM profiles WHERE user_id = ?").bind(identity.userId).first(),
-    db.prepare("SELECT * FROM journeys WHERE user_id = ? AND deleted_at IS NULL ORDER BY sequence_number").bind(identity.userId).all(),
-    db.prepare("SELECT * FROM journey_tasks WHERE user_id=? ORDER BY journey_id,priority,rowid").bind(identity.userId).all(),
-    db.prepare("SELECT * FROM monthly_outcomes WHERE user_id = ? AND period=? ORDER BY rowid").bind(identity.userId,currentPeriod).all(),
-    db.prepare("SELECT * FROM monthly_outcomes WHERE user_id = ? AND period<? ORDER BY period DESC,rowid DESC LIMIT 60").bind(identity.userId,currentPeriod).all(),
-    db.prepare("SELECT * FROM weekly_cycles WHERE user_id=? AND week_start=? LIMIT 1").bind(identity.userId,weekStart).first(),
-    db.prepare("SELECT * FROM weekly_cycles WHERE user_id=? ORDER BY week_start DESC LIMIT 12").bind(identity.userId).all(),
-    db.prepare("SELECT * FROM weekly_actions WHERE user_id = ? AND cycle_id=(SELECT id FROM weekly_cycles WHERE user_id=? AND week_start=? LIMIT 1) ORDER BY priority,rowid").bind(identity.userId,identity.userId,weekStart).all(),
-    db.prepare("SELECT * FROM weekly_actions WHERE user_id = ? AND cycle_id IN (SELECT id FROM weekly_cycles WHERE user_id=? AND week_start<?) ORDER BY rowid DESC LIMIT 120").bind(identity.userId,identity.userId,weekStart).all(),
     db.prepare("SELECT * FROM checkins WHERE user_id = ? ORDER BY created_at DESC LIMIT 30").bind(identity.userId).all(),
     db.prepare("SELECT * FROM reviews WHERE user_id = ? ORDER BY created_at DESC LIMIT 8").bind(identity.userId).all(),
     db.prepare("SELECT * FROM task_outputs WHERE user_id = ? ORDER BY created_at DESC LIMIT 50").bind(identity.userId).all(),
     db.prepare("SELECT * FROM financial_records WHERE user_id = ? ORDER BY recorded_at DESC, created_at DESC LIMIT 1000").bind(identity.userId).all(),
     db.prepare("SELECT * FROM financial_monthly_bills WHERE user_id=? ORDER BY period DESC LIMIT 36").bind(identity.userId).all(),
     db.prepare("SELECT * FROM english_messages WHERE user_id = ? ORDER BY created_at ASC LIMIT 60").bind(identity.userId).all(),
-    db.prepare("SELECT * FROM footprints WHERE user_id = ? ORDER BY updated_at DESC").bind(identity.userId).all(),
-    db.prepare("SELECT id, footprint_id FROM footprint_images WHERE user_id = ? ORDER BY created_at ASC").bind(identity.userId).all(),
     db.prepare("SELECT * FROM journal_entries WHERE user_id = ? ORDER BY recorded_at DESC, updated_at DESC LIMIT 300").bind(identity.userId).all(),
     db.prepare("SELECT id, journal_id FROM journal_images WHERE user_id = ? ORDER BY created_at ASC").bind(identity.userId).all(),
     db.prepare("SELECT id,record_type,record_id FROM record_images WHERE user_id=? ORDER BY created_at ASC").bind(identity.userId).all(),
     db.prepare("SELECT * FROM stop_rule_events WHERE user_id=? ORDER BY created_at DESC LIMIT 20").bind(identity.userId).all(),
   ]);
-  return NextResponse.json({ profile, journeys: journeys.results, journeyTasks:journeyTasks.results, outcomes: outcomes.results, outcomeHistory: outcomeHistory.results, activeWeek, weeklyCycles:weeklyCycles.results, actions: actions.results, historyActions:historyActions.results, checkins: checkins.results, reviews: reviews.results, taskOutputs: taskOutputs.results, financialRecords: financialRecords.results,financialMonthlyBills:financialMonthlyBills.results, englishMessages: englishMessages.results, footprints: footprints.results, footprintImages: footprintImages.results, journalEntries: journalEntries.results, journalImages: journalImages.results, recordImages:recordImages.results, stopRuleEvents:stopRuleEvents.results });
+  return NextResponse.json({ profile, journeys: [], journeyTasks:[], outcomes: [], outcomeHistory: [], activeWeek:null, weeklyCycles:[], actions: [], historyActions:[], checkins: checkins.results, reviews: reviews.results, taskOutputs: taskOutputs.results, financialRecords: financialRecords.results,financialMonthlyBills:financialMonthlyBills.results, englishMessages: englishMessages.results, footprints: [], footprintImages: [], journalEntries: journalEntries.results, journalImages: journalImages.results, recordImages:recordImages.results, stopRuleEvents:stopRuleEvents.results });
 }
 
 export async function POST(request: Request) {
@@ -526,14 +459,17 @@ export async function POST(request: Request) {
     const incomeType = category === "income" && ["salary","non_salary"].includes(clean(body.incomeType,20)) ? clean(body.incomeType,20) : "", sourceName = category === "income" ? clean(body.sourceName,100) : "", expenseScope = /expense$/.test(category) && clean(body.expenseScope,20) === "business" ? "business" : "personal";
     if (!["cash","reserve_fund","fixed_asset","investment","property","income","fixed_expense","daily_expense","social_expense","exercise_expense","learning_expense"].includes(category) || !Number.isFinite(amount) || amount < 0 || !Number.isFinite(investmentPrincipal)||investmentPrincipal<0||!Number.isFinite(investmentReturn) || (descriptionOnly && !note)) return NextResponse.json({error:"invalid_finance"},{status:400});
     await db.prepare("INSERT INTO financial_records (id,user_id,action_id,category,amount,note,recorded_at,created_at,income_type,source_name,expense_scope,investment_principal,investment_return) VALUES (?,?,NULL,?,?,?,?,?,?,?,?,?,?)").bind(crypto.randomUUID(),identity.userId,category,category==="investment"?investmentPrincipal:amount,note,clean(body.recordedAt,10)||now.slice(0,10),now,incomeType,sourceName,expenseScope,investmentPrincipal,investmentReturn).run();
+    settledFinancialPeriods.delete(`${identity.userId}:${periods.month}`);
   } else if (body.action === "update-financial-record" && typeof body.id === "string") {
     const category = clean(body.category, 30), descriptionOnly = category === "fixed_asset" || category === "property", amount = descriptionOnly ? 0 : category==="investment"?Number(body.investmentPrincipal):Number(body.amount), note = clean(body.note, 400);
     const investmentPrincipal=category==="investment"?Number(body.investmentPrincipal):0,investmentReturn=category==="investment"?Number(body.investmentReturn):0;
     const incomeType = category === "income" && ["salary","non_salary"].includes(clean(body.incomeType,20)) ? clean(body.incomeType,20) : "", sourceName = category === "income" ? clean(body.sourceName,100) : "", expenseScope = /expense$/.test(category) && clean(body.expenseScope,20) === "business" ? "business" : "personal";
     if (!["cash","reserve_fund","fixed_asset","investment","property","income","fixed_expense","daily_expense","social_expense","exercise_expense","learning_expense"].includes(category) || !Number.isFinite(amount) || amount < 0 || !Number.isFinite(investmentPrincipal)||investmentPrincipal<0||!Number.isFinite(investmentReturn) || (descriptionOnly && !note)) return NextResponse.json({error:"invalid_finance"},{status:400});
     await db.prepare("UPDATE financial_records SET action_id=NULL,category=?,amount=?,note=?,recorded_at=?,income_type=?,source_name=?,expense_scope=?,investment_principal=?,investment_return=? WHERE id=? AND user_id=?").bind(category,category==="investment"?investmentPrincipal:amount,note,clean(body.recordedAt,10)||now.slice(0,10),incomeType,sourceName,expenseScope,investmentPrincipal,investmentReturn,body.id,identity.userId).run();
+    settledFinancialPeriods.delete(`${identity.userId}:${periods.month}`);
   } else if (body.action === "delete-financial-record" && typeof body.id === "string") {
     await db.prepare("DELETE FROM financial_records WHERE id=? AND user_id=?").bind(body.id,identity.userId).run();
+    settledFinancialPeriods.delete(`${identity.userId}:${periods.month}`);
   } else if (body.action === "english-coach") {
     const message = clean(body.message,1200); if (!message) return NextResponse.json({error:"missing_message"},{status:400});
     const ai = await askOpenAI(`用户正在练习英语。用户说：${message}\n请用JSON回答，字段 reply（自然的英文回复）和 feedback（中文点评，包含一个改进建议）。`);

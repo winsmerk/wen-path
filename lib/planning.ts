@@ -16,7 +16,11 @@ const defaultTypes = [
   ["other", "其他", "#77736d", "·", 11],
 ] as const;
 
-export async function ensurePlanningSchema(db: D1Database) {
+let planningSchemaPromise: Promise<void> | null = null;
+const seededPlanningUsers = new Set<string>();
+const refreshedPlanningPeriods = new Set<string>();
+
+async function initializePlanningSchema(db: D1Database) {
   await db.batch([
     db.prepare(`CREATE TABLE IF NOT EXISTS journey_stages_v2 (
       id TEXT PRIMARY KEY, user_id TEXT NOT NULL, title TEXT NOT NULL, objective TEXT NOT NULL DEFAULT '',
@@ -88,7 +92,26 @@ export async function ensurePlanningSchema(db: D1Database) {
   await db.prepare("PRAGMA optimize").run();
 }
 
+export function ensurePlanningSchema(db: D1Database) {
+  if (!planningSchemaPromise) {
+    planningSchemaPromise = initializePlanningSchema(db).catch((error) => {
+      planningSchemaPromise = null;
+      throw error;
+    });
+  }
+  return planningSchemaPromise;
+}
+
 export async function seedPlanningTypes(db: D1Database, userId: string) {
+  if (seededPlanningUsers.has(userId)) return;
+  const [typeCount, capacityCount] = await Promise.all([
+    db.prepare("SELECT COUNT(*) AS total FROM task_types_v2 WHERE user_id=?").bind(userId).first<{total:number}>(),
+    db.prepare("SELECT COUNT(*) AS total FROM weekly_capacity_days_v2 WHERE user_id=?").bind(userId).first<{total:number}>(),
+  ]);
+  if (Number(typeCount?.total) >= defaultTypes.length && Number(capacityCount?.total) >= 7) {
+    seededPlanningUsers.add(userId);
+    return;
+  }
   const now = new Date().toISOString();
   await db.batch(defaultTypes.map(([key,name,color,icon,sort]) => db.prepare(
     "INSERT OR IGNORE INTO task_types_v2 (id,user_id,type_key,name,color,icon,sort_order,enabled,created_at,updated_at) VALUES (?,?,?,?,?,?,?,1,?,?)",
@@ -96,6 +119,7 @@ export async function seedPlanningTypes(db: D1Database, userId: string) {
   await db.batch([1,2,3,4,5,6,7].map((weekday) => db.prepare(
     "INSERT OR IGNORE INTO weekly_capacity_days_v2 (id,user_id,weekday,available,minutes,slots_json,updated_at) VALUES (?,?,?,1,60,'[]',?)",
   ).bind(`${userId}-capacity-${weekday}`,userId,weekday,now)));
+  seededPlanningUsers.add(userId);
 }
 
 function dateKey(date: Date) { return date.toISOString().slice(0,10); }
@@ -136,16 +160,21 @@ export async function generatePlanInstances(db:D1Database,userId:string,period:s
   const tasks=await db.prepare(`SELECT t.* FROM task_definitions_v2 t
     JOIN monthly_plan_goals_v2 pg ON pg.goal_id=t.goal_id AND pg.user_id=t.user_id
     WHERE t.user_id=? AND pg.plan_id=? AND t.enabled=1`).bind(userId,plan.id).all<DefinitionRow>();
-  const now=new Date().toISOString(); let created=0;
+  const now=new Date().toISOString();
+  const inserts:D1PreparedStatement[]=[];
   for(const task of tasks.results){
     const dates=candidateDates(task,period),times=parseList(task.times_json).map(String).filter((item)=>/^([01]\d|2[0-3]):[0-5]\d$/.test(item));
     for(let index=0;index<dates.length;index++){
       const date=dates[index],occurrenceKey=`${plan.id}:${task.id}:${date}:${index}`;
-      const result=await db.prepare(`INSERT OR IGNORE INTO task_instances_v2
+      inserts.push(db.prepare(`INSERT OR IGNORE INTO task_instances_v2
         (id,user_id,plan_id,goal_id,definition_id,title,type_key,scheduled_date,scheduled_time,estimated_minutes,priority,status,source,user_adjusted,occurrence_key,created_at,updated_at)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,'pending','system',0,?,?,?)`).bind(crypto.randomUUID(),userId,plan.id,task.goal_id,task.id,task.title,task.type_key,date,times.length?times[index%times.length]:"",task.estimated_minutes,task.priority,occurrenceKey,now,now).run();
-      created+=Number(result.meta.changes||0);
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,'pending','system',0,?,?,?)`).bind(crypto.randomUUID(),userId,plan.id,task.goal_id,task.id,task.title,task.type_key,date,times.length?times[index%times.length]:"",task.estimated_minutes,task.priority,occurrenceKey,now,now));
     }
+  }
+  let created=0;
+  for(let offset=0;offset<inserts.length;offset+=80){
+    const results=await db.batch(inserts.slice(offset,offset+80));
+    created+=results.reduce((sum,result)=>sum+Number(result.meta.changes||0),0);
   }
   return created;
 }
@@ -177,6 +206,21 @@ export async function generateReports(db:D1Database,userId:string) {
   }
 }
 
+export async function ensurePlanningDerivedData(db:D1Database,userId:string) {
+  const {month,weekStart}=executionPeriods(),cacheKey=`${userId}:${month}:${weekStart}`;
+  if(refreshedPlanningPeriods.has(cacheKey))return;
+  const previousSunday=new Date(`${weekStart}T00:00:00Z`);previousSunday.setUTCDate(previousSunday.getUTCDate()-1);
+  const previousWeek=mondayOf(previousSunday);
+  const [year,monthNumber]=month.split("-").map(Number),previousMonth=dateKey(new Date(Date.UTC(year,monthNumber-2,1))).slice(0,7);
+  const state=await db.prepare(`SELECT
+    (SELECT COUNT(*) FROM monthly_plans_v2 WHERE user_id=? AND period=? AND status!='draft') AS plans,
+    (SELECT COUNT(*) FROM task_instances_v2 WHERE user_id=? AND scheduled_date>=? AND scheduled_date<=?) AS instances,
+    (SELECT COUNT(*) FROM planning_reports_v2 WHERE user_id=? AND status='final' AND ((report_type='weekly' AND period=?) OR (report_type='monthly' AND period=?))) AS reports`).bind(userId,month,userId,`${month}-01`,`${month}-31`,userId,previousWeek,previousMonth).first<{plans:number;instances:number;reports:number}>();
+  if(Number(state?.plans)>0&&Number(state?.instances)===0)await generatePlanInstances(db,userId,month);
+  if(Number(state?.reports)<2)await generateReports(db,userId);
+  refreshedPlanningPeriods.add(cacheKey);
+}
+
 export async function syncPlanningProgress(db:D1Database,userId:string,goalId:string,now=new Date().toISOString()) {
   const instanceCounts=await db.prepare("SELECT COUNT(*) AS total,SUM(CASE WHEN status='completed' THEN 1 ELSE 0 END) AS completed FROM task_instances_v2 WHERE user_id=? AND goal_id=?").bind(userId,goalId).first<{total:number;completed:number}>();
   const total=Number(instanceCounts?.total||0),completed=Number(instanceCounts?.completed||0);
@@ -190,8 +234,6 @@ export async function syncPlanningProgress(db:D1Database,userId:string,goalId:st
 
 export async function planningSnapshot(db:D1Database,userId:string) {
   const {localDate,weekStart,weekEnd,month}=executionPeriods();
-  await generatePlanInstances(db,userId,month);
-  await generateReports(db,userId);
   const [stages,goals,tasks,types,plans,planGoals,instances,capacity,reports,records]=await Promise.all([
     db.prepare("SELECT * FROM journey_stages_v2 WHERE user_id=? ORDER BY sort_order,created_at").bind(userId).all(),
     db.prepare("SELECT * FROM journey_goals_v2 WHERE user_id=? ORDER BY sort_order,created_at").bind(userId).all(),

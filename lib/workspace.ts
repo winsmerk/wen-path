@@ -47,7 +47,10 @@ export function executionPeriods(date = new Date()) {
   return { weekStart: monday.toISOString().slice(0,10), weekEnd: sunday.toISOString().slice(0,10), month: localDate.slice(0,7), localDate };
 }
 
-export async function ensureSchema(db: D1Database) {
+let workspaceSchemaPromise: Promise<void> | null = null;
+const seededWorkspaceUsers = new Set<string>();
+
+async function initializeSchema(db: D1Database) {
   await db.batch([
     db.prepare(`CREATE TABLE IF NOT EXISTS profiles (
       user_id TEXT PRIMARY KEY, display_name TEXT NOT NULL, vision TEXT NOT NULL,
@@ -265,7 +268,18 @@ export async function ensureSchema(db: D1Database) {
   await db.prepare("PRAGMA optimize").run();
 }
 
+export function ensureSchema(db: D1Database) {
+  if (!workspaceSchemaPromise) {
+    workspaceSchemaPromise = initializeSchema(db).catch((error) => {
+      workspaceSchemaPromise = null;
+      throw error;
+    });
+  }
+  return workspaceSchemaPromise;
+}
+
 export async function seedWorkspace(db: D1Database, identity: WorkspaceIdentity) {
+  if (seededWorkspaceUsers.has(identity.userId)) return;
   const now = new Date().toISOString();
   await db.prepare(
     `INSERT OR IGNORE INTO profiles
@@ -287,4 +301,5 @@ export async function seedWorkspace(db: D1Database, identity: WorkspaceIdentity)
     await db.prepare("UPDATE financial_records SET action_id=NULL WHERE user_id=?").bind(identity.userId).run();
     await db.prepare("UPDATE profiles SET removed_modules_purged=1,updated_at=? WHERE user_id=?").bind(now,identity.userId).run();
   }
+  seededWorkspaceUsers.add(identity.userId);
 }
