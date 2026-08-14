@@ -148,13 +148,6 @@ const areaTone: Record<string, string> = {
   探索与生活: "sky",
 };
 
-function compactVision(vision: string) {
-  const sentences = vision.split(/[。！？；;]+/).map((item) => item.trim()).filter(Boolean);
-  const summary = (sentences.at(-1) || vision.trim()).replace(/^最重要的是[，,:：]?\s*/, "");
-  if (!summary) return "在普通日子里，持续靠近自己想要的生活。";
-  return `${summary.length > 34 ? `${summary.slice(0, 34)}…` : summary}${summary.length <= 34 && !/[。！？]$/.test(summary) ? "。" : ""}`;
-}
-
 export default function LifeOS() {
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [planning, setPlanning] = useState<PlanningData | null>(null);
@@ -255,7 +248,7 @@ export default function LifeOS() {
         </nav>
         <button type="button" className={tab === "vision" ? "vision-mini active" : "vision-mini"} onClick={() => setTab("vision")}>
           <span className="eyebrow">愿景</span>
-          <p>{compactVision(workspace.profile.vision)}</p>
+          <p>拥有自由选择工作与生活地点的能力</p>
           {workspace.profile.target_date&&<div className="years-row"><span>{visionTime.totalDays>0?`还有 ${visionTime.years} 年 ${visionTime.months} 个月`:"已到达目标日期"}</span><i><b /></i></div>}
         </button>
         <div className="user-row"><span className="avatar">文</span><span><strong>{workspace.profile.display_name}</strong><small>建立基线 · 第1阶段</small></span></div>

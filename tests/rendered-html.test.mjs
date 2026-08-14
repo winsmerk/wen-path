@@ -52,6 +52,7 @@ test("ships vision journey planning, reporting, and durable data declarations", 
   assert.match(lifeOS, /key: "plan"/);
   assert.doesNotMatch(lifeOS, /label: "40岁愿景"/);
   assert.match(lifeOS, /目标日期（可选）/);
+  assert.match(lifeOS, /拥有自由选择工作与生活地点的能力/);
   assert.match(lifeOS, /当前财务情况/);
   assert.match(lifeOS, /English Coach/);
   assert.match(lifeOS, /key: "tools"/);
