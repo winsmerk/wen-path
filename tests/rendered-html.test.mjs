@@ -26,7 +26,7 @@ test("renders the LifeOS application shell", async () => {
 
 test("ships vision journey planning, reporting, and durable data declarations", async () => {
   const { readFile } = await import("node:fs/promises");
-  const [layout, page, lifeOS, planningUI, workspaceApi, planningApi, planningRecordsApi, planningLib, journalApi, recordsApi, schema, workspaceLib, migration, recordsMigration, weekSelectionMigration, quotes, hosting] = await Promise.all([
+  const [layout, page, lifeOS, planningUI, workspaceApi, planningApi, planningRecordsApi, speakingCoachApi, planningLib, journalApi, recordsApi, schema, workspaceLib, migration, recordsMigration, weekSelectionMigration, quotes, hosting] = await Promise.all([
     readFile(new URL("app/layout.tsx", templateRoot), "utf8"),
     readFile(new URL("app/page.tsx", templateRoot), "utf8"),
     readFile(new URL("app/LifeOS.tsx", templateRoot), "utf8"),
@@ -34,6 +34,7 @@ test("ships vision journey planning, reporting, and durable data declarations", 
     readFile(new URL("app/api/workspace/route.ts", templateRoot), "utf8"),
     readFile(new URL("app/api/planning/route.ts", templateRoot), "utf8"),
     readFile(new URL("app/api/planning-records/route.ts", templateRoot), "utf8"),
+    readFile(new URL("app/api/speaking-coach/route.ts", templateRoot), "utf8"),
     readFile(new URL("lib/planning.ts", templateRoot), "utf8"),
     readFile(new URL("app/api/journal/route.ts", templateRoot), "utf8"),
     readFile(new URL("app/api/records/route.ts", templateRoot), "utf8"),
@@ -63,8 +64,15 @@ test("ships vision journey planning, reporting, and durable data declarations", 
   assert.match(planningUI, /添加任务/);
   assert.match(planningUI, /单次任务/);
   assert.match(planningUI, /周期任务/);
-  assert.match(planningUI, /完成任务时必须提交记录/);
-  assert.match(planningUI, /保存记录并完成任务/);
+  assert.match(planningUI, /完成时默认提醒填写记录/);
+  assert.match(planningUI, /直接完成/);
+  assert.match(planningUI, /保存记录并完成/);
+  assert.doesNotMatch(planningApi, /nextStatus==="completed"&&current\.record_required/);
+  assert.match(lifeOS, /开始录音/);
+  assert.match(lifeOS, /结束录音/);
+  assert.match(lifeOS, /sendRecording/);
+  assert.match(speakingCoachApi, /gpt-audio-1\.5/);
+  assert.match(speakingCoachApi, /specific likely pronunciation problems/);
   assert.match(planningUI, /每天/);
   assert.match(planningUI, /每周/);
   assert.match(planningUI, /每月/);
