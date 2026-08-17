@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
-import { JourneyManager, PlanManager, PlanningData, PlanningRecord, PlanningToday, TaskType } from "@/app/PlanningSystem";
+import { JourneyManager, PlanManager, PlanningData, PlanningRecord, PlanningReport, PlanningToday, TaskType } from "@/app/PlanningSystem";
 import { dailySuShiQuote } from "@/lib/su-shi-quotes";
 
 type Profile = {
@@ -229,10 +229,11 @@ export default function LifeOS() {
     return <Onboarding workspace={workspace} busy={saving} onStart={() => mutate({ action: "initialize" })} />;
   }
 
-  const completedActions = workspace.actions.filter((item) => item.status === "completed").length;
+  const currentWeekTasks=planning.taskInstances.filter((item)=>item.week_selected!==0&&item.scheduled_date>=planning.calendar.weekStart&&item.scheduled_date<=planning.calendar.weekEnd);
+  const completedActions = currentWeekTasks.filter((item) => item.status === "completed").length;
   const exerciseCount = workspace.checkins.filter((item) => item.type === "exercise").length;
   const englishCount = workspace.checkins.filter((item) => item.type === "english").length;
-  const activeActions = workspace.actions.filter((item) => item.status !== "paused");
+  const activeActions = currentWeekTasks.filter((item) => item.status !== "paused");
   const visionTime = visionCountdown(workspace.profile.target_date);
 
   return (
@@ -271,6 +272,8 @@ export default function LifeOS() {
             exerciseCount={exerciseCount}
             englishCount={englishCount}
             reviews={workspace.reviews}
+            reports={planning.reports}
+            taskTypes={planning.taskTypes}
             busy={saving}
             mutate={mutate}
           />
@@ -837,6 +840,7 @@ function Finance({ records,bills, busy, mutate }: { records: FinancialRecord[];b
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<FinancialRecord | null>(null);
   const [detailKey,setDetailKey]=useState("all");
+  const [detailCategory,setDetailCategory]=useState("all");
   const currentPeriod=new Date().toISOString().slice(0,7);
   const periods=[...new Set([currentPeriod,...bills.map((item)=>item.period),...records.map((item)=>item.recorded_at.slice(0,7))])].sort().reverse();
   const [selectedPeriod,setSelectedPeriod]=useState(currentPeriod);
@@ -858,8 +862,10 @@ function Finance({ records,bills, busy, mutate }: { records: FinancialRecord[];b
   const detailFilters:Record<string,{title:string;matches:(item:FinancialRecord)=>boolean}>={
     all:{title:`${selectedPeriod} 月账单全部明细`,matches:(item)=>item.recorded_at.startsWith(selectedPeriod)&&!["cash","reserve_fund","fixed_asset","property"].includes(item.category)},cash:{title:"可用现金明细",matches:(item)=>item.category==="cash"},reserve:{title:"备用金明细",matches:(item)=>item.category==="reserve_fund"},assets:{title:"固定资产明细",matches:(item)=>item.category==="fixed_asset"||item.category==="property"},fixedTotal:{title:"可计算固定资产明细",matches:(item)=>item.category==="cash"||item.category==="reserve_fund"},investment:{title:`${selectedPeriod} 投资明细`,matches:(item)=>item.category==="investment"&&item.recorded_at.startsWith(selectedPeriod)},income:{title:`${selectedPeriod} 收入明细`,matches:(item)=>item.category==="income"&&item.recorded_at.startsWith(selectedPeriod)},incomeStructure:{title:`${selectedPeriod} 工资与非工资收入`,matches:(item)=>item.category==="income"&&item.recorded_at.startsWith(selectedPeriod)},expense:{title:`${selectedPeriod} 支出明细`,matches:(item)=>expenseTypes.includes(item.category)&&item.recorded_at.startsWith(selectedPeriod)},profit:{title:`${selectedPeriod} 经营利润明细`,matches:(item)=>item.recorded_at.startsWith(selectedPeriod)&&((item.category==="income"&&item.income_type==="non_salary")||(expenseTypes.includes(item.category)&&item.expense_scope==="business"))},netFlow:{title:`${selectedPeriod} 月度净流入明细`,matches:(item)=>item.recorded_at.startsWith(selectedPeriod)&&(item.category==="income"||item.category==="investment"||expenseTypes.includes(item.category))},
   };
-  const detail=detailFilters[detailKey]??detailFilters.all,visibleRecords=records.filter(detail.matches);
-  const summary=(key:string,label:string,value:string,note:string,className="")=><button type="button" className={`finance-summary ${className} ${detailKey===key?"active":""}`} aria-pressed={detailKey===key} onClick={()=>setDetailKey(key)}><span>{label}</span><b>{value}</b><small>{note} · 点击查看明细</small></button>;
+  const categoryOptions:{key:string;label:string;matches:(item:FinancialRecord)=>boolean}[]=(detailKey==="income"||detailKey==="incomeStructure")?[{key:"all",label:"全部收入",matches:()=>true},{key:"salary",label:"工资收入",matches:(item)=>item.income_type==="salary"},{key:"non_salary",label:"非工资收入",matches:(item)=>item.income_type==="non_salary"}]:detailKey==="expense"?[{key:"all",label:"全部支出",matches:()=>true},...expenseTypes.map((category)=>({key:category,label:financeLabel(category),matches:(item:FinancialRecord)=>item.category===category})),{key:"personal",label:"个人支出",matches:(item)=>item.expense_scope!=="business"},{key:"business",label:"经营支出",matches:(item)=>item.expense_scope==="business"}]:detailKey==="assets"?[{key:"all",label:"全部固定资产",matches:()=>true},{key:"fixed_asset",label:"固定资产",matches:(item)=>item.category==="fixed_asset"},{key:"property",label:"历史房产记录",matches:(item)=>item.category==="property"}]:detailKey==="fixedTotal"?[{key:"all",label:"全部",matches:()=>true},{key:"cash",label:"可用现金",matches:(item)=>item.category==="cash"},{key:"reserve_fund",label:"备用金",matches:(item)=>item.category==="reserve_fund"}]:detailKey==="investment"?[{key:"all",label:"全部投资",matches:()=>true},{key:"gain",label:"正收益",matches:(item)=>item.investment_return>0},{key:"loss",label:"负收益",matches:(item)=>item.investment_return<0},{key:"flat",label:"收益为零",matches:(item)=>item.investment_return===0}]:detailKey==="profit"?[{key:"all",label:"全部经营记录",matches:()=>true},{key:"revenue",label:"经营收入",matches:(item)=>item.category==="income"},{key:"cost",label:"经营支出",matches:(item)=>expenseTypes.includes(item.category)}]:detailKey==="netFlow"||detailKey==="all"?[{key:"all",label:"全部流水",matches:()=>true},{key:"income",label:"收入",matches:(item)=>item.category==="income"},{key:"investment",label:"投资",matches:(item)=>item.category==="investment"},{key:"expense",label:"支出",matches:(item)=>expenseTypes.includes(item.category)}]:[];
+  const detail=detailFilters[detailKey]??detailFilters.all,categoryFilter=categoryOptions.find((item)=>item.key===detailCategory)??categoryOptions[0],visibleRecords=records.filter(detail.matches).filter((item)=>categoryFilter?.matches(item)??true);
+  const chooseDetail=(key:string)=>{setDetailKey(key);setDetailCategory("all");};
+  const summary=(key:string,label:string,value:string,note:string,className="")=><button type="button" className={`finance-summary ${className} ${detailKey===key?"active":""}`} aria-pressed={detailKey===key} onClick={()=>chooseDetail(key)}><span>{label}</span><b>{value}</b><small>{note} · 点击查看明细</small></button>;
   return <>
     <PageHeader kicker="固定资产与月度经营账" title="当前财务情况"><button className="primary-button" onClick={() => setAdding(true)}>＋ 添加财务记录</button></PageHeader>
     <section className="finance-section"><div className="section-heading"><div><span className="eyebrow">固定资产模块</span><h3>现金与资产快照</h3></div></div><div className="finance-grid fixed-assets-grid">
@@ -868,7 +874,7 @@ function Finance({ records,bills, busy, mutate }: { records: FinancialRecord[];b
       {summary("assets","固定资产",`${fixedAssetCount} 项`,"只记录描述，不估值")}
       {summary("fixedTotal","可计算固定资产",currency(cash+reserveFund),"现金 + 备用金","net-worth")}
     </div></section>
-    <section className="finance-section monthly-bill"><div className="section-heading"><div><span className="eyebrow">月度账单</span><h3>{selectedPeriod} · {isSettled?"已自动结算":"本月实时统计"}</h3></div><select value={selectedPeriod} onChange={(event)=>{setSelectedPeriod(event.target.value);setDetailKey("all");}}>{periods.map((period)=><option key={period} value={period}>{period}{period<currentPeriod?" · 已结算":" · 本月"}</option>)}</select></div><div className="bill-status"><span className={isSettled?"settled":"live"}>{isSettled?"✓ 月底已结算":"● 实时账单"}</span><p>{isSettled?`结算时间 ${new Date(bill!.settled_at).toLocaleDateString("zh-CN")}`:"进入下个月后，系统会自动锁定本月汇总并生成历史账单。"}</p></div><div className="finance-grid">
+    <section className="finance-section monthly-bill"><div className="section-heading"><div><span className="eyebrow">月度账单</span><h3>{selectedPeriod} · {isSettled?"已自动结算":"本月实时统计"}</h3></div><select value={selectedPeriod} onChange={(event)=>{setSelectedPeriod(event.target.value);chooseDetail("all");}}>{periods.map((period)=><option key={period} value={period}>{period}{period<currentPeriod?" · 已结算":" · 本月"}</option>)}</select></div><div className="bill-status"><span className={isSettled?"settled":"live"}>{isSettled?"✓ 月底已结算":"● 实时账单"}</span><p>{isSettled?`结算时间 ${new Date(bill!.settled_at).toLocaleDateString("zh-CN")}`:"进入下个月后，系统会自动锁定本月汇总并生成历史账单。"}</p></div><div className="finance-grid">
       {summary("investment","投资本金 / 月收益",`${currency(totals.principal)} / ${currency(totals.investmentReturn)}`,totals.investmentReturn<0?"本月投资亏损":"本月投资收益")}
       {summary("income","本月收入",currency(totals.income),"累计记录")}
       {summary("incomeStructure","工资 / 非工资收入",`${currency(totals.salary)} / ${currency(totals.nonSalary)}`,"收入结构")}
@@ -876,7 +882,7 @@ function Finance({ records,bills, busy, mutate }: { records: FinancialRecord[];b
       {summary("profit","经营利润",currency(totals.profit),"非工资收入 − 经营支出")}
       {summary("netFlow","月度净流入",currency(totals.netFlow),"收入 + 投资收益 − 支出","net-worth")}
     </div></section>
-    <section className="finance-list"><div className="section-heading"><div><span className="eyebrow">{detail.title}</span><h3>{detailKey==="all"?`${isSettled?"已结算账单":"实时账单"} · ${visibleRecords.length} 条记录`:`共 ${visibleRecords.length} 条记录`}</h3></div>{detailKey!=="all"&&<button className="soft-button" onClick={()=>setDetailKey("all")}>查看月账单全部</button>}</div>{visibleRecords.length ? visibleRecords.map((item) => {
+    <section className="finance-list"><div className="section-heading"><div><span className="eyebrow">{detail.title}</span><h3>{detailKey==="all"?`${isSettled?"已结算账单":"实时账单"} · ${visibleRecords.length} 条记录`:`共 ${visibleRecords.length} 条记录`}</h3></div>{detailKey!=="all"&&<button className="soft-button" onClick={()=>chooseDetail("all")}>查看月账单全部</button>}</div>{categoryOptions.length>1&&<div className="finance-detail-filters" aria-label="明细分类筛选">{categoryOptions.map((option)=><button type="button" key={option.key} className={detailCategory===option.key?"active":""} onClick={()=>setDetailCategory(option.key)}>{option.label}</button>)}</div>}{visibleRecords.length ? visibleRecords.map((item) => {
       const descriptionOnly = item.category === "fixed_asset" || item.category === "property";
       return <article key={item.id}><span className={`finance-category ${item.category}`}>{financeLabel(item.category)}</span><div><b>{descriptionOnly ? item.note || "固定资产" : item.category==="investment"?`本金 ${currency(item.investment_principal||item.amount)} · 收益 ${currency(item.investment_return||0)}`:currency(item.amount)}</b><p>{descriptionOnly ? "不估值、不计入可计算资产" : `${item.note || "未填写备注"}${item.category==="income"?` · ${item.income_type==="salary"?"工资":"非工资"}${item.source_name?` / ${item.source_name}`:""}`:/expense$/.test(item.category)?` · ${item.expense_scope==="business"?"经营支出":"个人支出"}`:""}`}</p></div><div className="finance-record-meta"><time>{new Date(item.recorded_at).toLocaleDateString("zh-CN")}</time><button onClick={() => setEditing(item)}>编辑</button></div></article>;
     }) : <div className="empty-list"><b>这里还没有记录</b><p>点击“添加财务记录”，补充这部分财务数据。</p></div>}</section>
@@ -887,7 +893,7 @@ function Finance({ records,bills, busy, mutate }: { records: FinancialRecord[];b
 
 function financeLabel(category: FinancialRecord["category"]) { return { cash: "现金", reserve_fund:"备用金", fixed_asset: "固定资产", investment: "投资", property: "固定资产", income: "收入", fixed_expense: "固定支出", daily_expense: "日常消费", social_expense: "请客", exercise_expense: "运动", learning_expense: "学习" }[category]; }
 
-function ReviewPanel({ completedActions, actionTotal, exerciseCount, englishCount, reviews, busy, mutate }: { completedActions: number; actionTotal: number; exerciseCount: number; englishCount: number; reviews: Review[]; busy: boolean; mutate: (payload: Record<string, unknown>, success?: string) => Promise<boolean> }) {
+function ReviewPanel({ completedActions, actionTotal, exerciseCount, englishCount, reviews, reports, taskTypes, busy, mutate }: { completedActions: number; actionTotal: number; exerciseCount: number; englishCount: number; reviews: Review[]; reports:PlanningReport[];taskTypes:TaskType[]; busy: boolean; mutate: (payload: Record<string, unknown>, success?: string) => Promise<boolean> }) {
   const [achievement, setAchievement] = useState("");
   const [lowValue, setLowValue] = useState("");
   const [healthCheck, setHealthCheck] = useState("");
@@ -895,6 +901,8 @@ function ReviewPanel({ completedActions, actionTotal, exerciseCount, englishCoun
   const [energyScore, setEnergyScore] = useState(7);
   const [nextPriority, setNextPriority] = useState("");
   const [decision, setDecision] = useState<Review["decision"]>("continue");
+  const [historyFilter,setHistoryFilter]=useState<"all"|"manual"|"auto">("all");
+  const weeklyReports=reports.filter((item)=>item.report_type==="weekly");
   async function submit(event: FormEvent) {
     event.preventDefault();
     const ok = await mutate({ action: "review", achievement, lowValue, healthCheck, marketEvidence, energyScore, nextPriority, decision }, "周复盘已保存，系统已自动检查停止规则");
@@ -907,6 +915,11 @@ function ReviewPanel({ completedActions, actionTotal, exerciseCount, englishCoun
       <form className="review-form" onSubmit={submit}><label><span>1 · 本周最重要的成果是什么？</span><textarea required value={achievement} onChange={(event) => setAchievement(event.target.value)} /></label><label><span>2 · 哪件事消耗很大但价值较低？</span><textarea value={lowValue} onChange={(event) => setLowValue(event.target.value)} /></label><label><span>3 · 睡眠、健康、英语或关系是否被挤压？</span><textarea required value={healthCheck} onChange={(event)=>setHealthCheck(event.target.value)} placeholder="写事实；系统会结合连续两周数据判断…" /></label><label><span>4 · 本周获得了什么真实市场证据？</span><textarea required value={marketEvidence} onChange={(event)=>setMarketEvidence(event.target.value)} placeholder="用户反馈、付费、面试、作品数据；没有也请写“暂无”…" /></label><label><span>5 · 当前能量：{energyScore}/10</span><input className="range-input" type="range" min="1" max="10" value={energyScore} onChange={(event)=>setEnergyScore(Number(event.target.value))} /></label><label><span>6 · 下周唯一必须推进的里程碑是什么？</span><textarea required value={nextPriority} onChange={(event) => setNextPriority(event.target.value)} /></label><label><span>7 · 继续、调整还是停止？</span><select value={decision} onChange={(event)=>setDecision(event.target.value as Review["decision"])}><option value="continue">继续</option><option value="adjust">调整方向或范围</option><option value="stop">停止商业方向</option></select></label><button className="primary-button" disabled={busy}>{busy ? "正在分析规则…" : "保存并自动判断"}<span>→</span></button></form>
       <aside className="review-draft"><span className="ai-mark">✦</span><span className="eyebrow">自动停止规则</span><h3>连续数据决定是否继续</h3><div><b>客观数据</b><p>本周完成 {completedActions}/{actionTotal} 项重点，记录运动 {exerciseCount} 次、英语 {englishCount} 次。</p></div><div><b>系统规则</b><p>连续两周低能量或健康承压会自动减量；连续三周无市场证据要求调整，四周则建议停止。</p></div>{reviews[0]&&<><div className={`auto-decision ${reviews[0].auto_decision}`}><b>系统判断 · {{continue:"继续",adjust:"调整",stop:"停止"}[reviews[0].auto_decision]}</b><p>{reviews[0].kill_rule_count?`触发 ${reviews[0].kill_rule_count} 条规则`:`未触发停止规则`} · {reviews[0].next_priority}</p></div>{reviews[0].kill_rule_count>0&&<div><b>触发原因</b><p>{(() => { try{return (JSON.parse(reviews[0].auto_reasons) as Array<{reason:string}>).map((item)=>item.reason).join("；");}catch{return "已触发自动规则";} })()}</p></div>}</>}</aside>
     </section>
+    <section className="review-history"><div className="section-heading"><div><span className="eyebrow">持续积累</span><h3>历史复盘记录</h3></div><div className="history-filters"><button className={historyFilter==="all"?"active":""} onClick={()=>setHistoryFilter("all")}>全部</button><button className={historyFilter==="manual"?"active":""} onClick={()=>setHistoryFilter("manual")}>手动复盘</button><button className={historyFilter==="auto"?"active":""} onClick={()=>setHistoryFilter("auto")}>自动周报</button></div></div><div className="review-history-list">
+      {(historyFilter!=="manual")&&weeklyReports.map((report)=>{let summary:{total:number;completed:number;pending:number;completionRate:number;plannedMinutes:number;completedMinutes:number;byType:Record<string,{count:number;minutes:number;completed:number}>};try{summary=JSON.parse(report.summary_json);}catch{summary={total:0,completed:0,pending:0,completionRate:0,plannedMinutes:0,completedMinutes:0,byType:{}};}return <article className="history-review auto-report" key={`report-${report.id}`}><div className="history-review-head"><span className="history-kind auto">自动周报</span><time>{report.period} 起始周</time><b>{summary.completionRate}% 完成</b></div><h4>完成 {summary.completed}/{summary.total} 项任务，投入 {Math.round(summary.completedMinutes/60*10)/10} 小时</h4><p>待完成 {summary.pending} 项 · 计划 {Math.round(summary.plannedMinutes/60*10)/10} 小时。周报根据当周勾选任务的实际完成情况自动生成并归档。</p><div className="history-type-tags">{Object.entries(summary.byType||{}).map(([key,value])=><span key={key}>{taskTypes.find((item)=>item.type_key===key)?.name||key} {value.completed}/{value.count}</span>)}</div></article>})}
+      {(historyFilter!=="auto")&&reviews.map((review)=><article className="history-review manual-review" key={`review-${review.id}`}><div className="history-review-head"><span className="history-kind manual">手动复盘</span><time>{review.week_start||new Date(review.created_at).toLocaleDateString("zh-CN")}</time><b>{{continue:"继续",adjust:"调整",stop:"停止"}[review.decision]}</b></div><h4>{review.achievement||"本周复盘"}</h4><p>下周重点：{review.next_priority} · 能量 {review.energy_score}/10</p>{review.low_value&&<small>低价值消耗：{review.low_value}</small>}</article>)}
+      {!weeklyReports.length&&!reviews.length&&<div className="empty-list"><b>还没有历史复盘</b><p>保存本周复盘后会记录在这里；自然周结束后系统也会自动生成周报。</p></div>}
+    </div></section>
   </>;
 }
 

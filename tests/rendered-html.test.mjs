@@ -55,8 +55,15 @@ test("ships vision journey planning, reporting, and durable data declarations", 
   assert.match(lifeOS, /目标日期（可选）/);
   assert.match(lifeOS, /拥有自由选择工作与生活地点的能力/);
   assert.match(lifeOS, /当前财务情况/);
+  assert.match(lifeOS, /finance-detail-filters/);
+  assert.match(lifeOS, /工资收入/);
+  assert.match(lifeOS, /个人支出/);
   assert.match(lifeOS, /English Coach/);
   assert.match(lifeOS, /key: "tools"/);
+  assert.match(lifeOS, /历史复盘记录/);
+  assert.match(lifeOS, /自动周报/);
+  assert.match(lifeOS, /weeklyReports/);
+  assert.match(lifeOS, /reports={planning\.reports}/);
   assert.match(lifeOS, /按任务类型归档的完成记录/);
   assert.doesNotMatch(lifeOS, /key: "footprints"/);
   assert.match(planningUI, /新增阶段/);
