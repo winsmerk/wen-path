@@ -64,6 +64,11 @@ test("ships vision journey planning, reporting, and durable data declarations", 
   assert.match(lifeOS, /自动周报/);
   assert.match(lifeOS, /weeklyReports/);
   assert.match(lifeOS, /reports={planning\.reports}/);
+  assert.match(lifeOS, /综合周报/);
+  assert.match(lifeOS, /查看周报详情/);
+  assert.match(lifeOS, /开始时间/);
+  assert.match(lifeOS, /结束时间/);
+  assert.match(lifeOS, /review\.week_start===report\.period/);
   assert.match(lifeOS, /按任务类型归档的完成记录/);
   assert.doesNotMatch(lifeOS, /key: "footprints"/);
   assert.match(planningUI, /新增阶段/);
