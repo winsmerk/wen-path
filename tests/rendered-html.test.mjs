@@ -58,6 +58,10 @@ test("ships vision journey planning, reporting, and durable data declarations", 
   assert.match(lifeOS, /finance-detail-filters/);
   assert.match(lifeOS, /工资收入/);
   assert.match(lifeOS, /个人支出/);
+  assert.match(lifeOS, /finance-filter-total/);
+  assert.match(lifeOS, /金额合计/);
+  assert.match(lifeOS, /本金合计/);
+  assert.match(lifeOS, /收益合计/);
   assert.match(lifeOS, /English Coach/);
   assert.match(lifeOS, /key: "tools"/);
   assert.match(lifeOS, /历史复盘记录/);
