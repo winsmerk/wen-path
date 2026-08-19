@@ -143,6 +143,9 @@ test("ships vision journey planning, reporting, and durable data declarations", 
   assert.match(lifeOS, /点击查看明细/);
   assert.match(lifeOS, /投资本金/);
   assert.match(lifeOS, /本月收益（元，可为负）/);
+  assert.match(lifeOS, /travel_expense/);
+  assert.match(lifeOS, /六类支出累计/);
+  assert.match(workspaceApi, /'travel_expense'/);
   assert.match(lifeOS, /写一篇日记/);
   assert.match(lifeOS, /记下灵感/);
   assert.match(lifeOS, /删除记录/);
