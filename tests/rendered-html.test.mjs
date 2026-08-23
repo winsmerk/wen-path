@@ -59,6 +59,10 @@ test("ships vision journey planning, reporting, and durable data declarations", 
   assert.match(lifeOS, /工资收入/);
   assert.match(lifeOS, /个人支出/);
   assert.match(lifeOS, /finance-filter-total/);
+  assert.match(lifeOS, /const \[showAmounts, setShowAmounts\] = useState\(false\)/);
+  assert.match(lifeOS, /◎ 显示金额/);
+  assert.match(lifeOS, /◉ 隐藏金额/);
+  assert.match(lifeOS, /¥••••/);
   assert.match(lifeOS, /金额合计/);
   assert.match(lifeOS, /本金合计/);
   assert.match(lifeOS, /收益合计/);
