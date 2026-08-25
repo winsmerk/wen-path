@@ -33,6 +33,10 @@ export function getOpenAIKey(): string | undefined {
   return env.OPENAI_API_KEY;
 }
 
+export function getServerChanSendKey(): string | undefined {
+  return env.SERVERCHAN_SENDKEY;
+}
+
 export function getMediaBucket(): R2Bucket | null {
   return env.MEDIA ?? null;
 }
@@ -127,6 +131,13 @@ async function initializeSchema(db: D1Database) {
       expense_scope TEXT NOT NULL DEFAULT 'personal', investment_principal REAL NOT NULL DEFAULT 0,
       investment_return REAL NOT NULL DEFAULT 0
     )`),
+    db.prepare(`CREATE TABLE IF NOT EXISTS memos (
+      id TEXT PRIMARY KEY, user_id TEXT NOT NULL, title TEXT NOT NULL,
+      content TEXT NOT NULL DEFAULT '', remind_at TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending', wechat_enabled INTEGER NOT NULL DEFAULT 1,
+      delivery_status TEXT NOT NULL DEFAULT 'pending', attempt_count INTEGER NOT NULL DEFAULT 0,
+      sent_at TEXT, last_error TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+    )`),
     db.prepare(`CREATE TABLE IF NOT EXISTS financial_monthly_bills (
       id TEXT PRIMARY KEY, user_id TEXT NOT NULL, period TEXT NOT NULL,
       income_total REAL NOT NULL DEFAULT 0, salary_income REAL NOT NULL DEFAULT 0,
@@ -177,6 +188,8 @@ async function initializeSchema(db: D1Database) {
     db.prepare("CREATE INDEX IF NOT EXISTS idx_checkins_user_type ON checkins(user_id, type)"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_outputs_user_action ON task_outputs(user_id, action_id)"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_finance_user_date ON financial_records(user_id, recorded_at)"),
+    db.prepare("CREATE INDEX IF NOT EXISTS idx_memos_due ON memos(delivery_status, status, remind_at)"),
+    db.prepare("CREATE INDEX IF NOT EXISTS idx_memos_user_time ON memos(user_id, remind_at)"),
     db.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_finance_bills_user_period ON financial_monthly_bills(user_id, period)"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_english_user_date ON english_messages(user_id, created_at)"),
     db.prepare("CREATE INDEX IF NOT EXISTS idx_footprints_user_status ON footprints(user_id, status)"),

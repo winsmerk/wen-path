@@ -162,6 +162,9 @@ export const financialRecords = sqliteTable("financial_records", {
 export const financialMonthlyBills = sqliteTable("financial_monthly_bills", {
   id:text("id").primaryKey(),userId:text("user_id").notNull(),period:text("period").notNull(),incomeTotal:real("income_total").notNull().default(0),salaryIncome:real("salary_income").notNull().default(0),nonSalaryIncome:real("non_salary_income").notNull().default(0),expenseTotal:real("expense_total").notNull().default(0),businessExpense:real("business_expense").notNull().default(0),investmentPrincipal:real("investment_principal").notNull().default(0),investmentReturn:real("investment_return").notNull().default(0),businessProfit:real("business_profit").notNull().default(0),netCashFlow:real("net_cash_flow").notNull().default(0),settledAt:text("settled_at").notNull(),
 },(table)=>[uniqueIndex("idx_finance_bills_user_period").on(table.userId,table.period)]);
+export const memos = sqliteTable("memos", {
+  id:text("id").primaryKey(),userId:text("user_id").notNull(),title:text("title").notNull(),content:text("content").notNull().default(""),remindAt:text("remind_at").notNull(),status:text("status").notNull().default("pending"),wechatEnabled:integer("wechat_enabled",{mode:"boolean"}).notNull().default(true),deliveryStatus:text("delivery_status").notNull().default("pending"),attemptCount:integer("attempt_count").notNull().default(0),sentAt:text("sent_at"),lastError:text("last_error").notNull().default(""),createdAt:text("created_at").notNull(),updatedAt:text("updated_at").notNull(),
+},(table)=>[index("idx_memos_due").on(table.deliveryStatus,table.status,table.remindAt),index("idx_memos_user_time").on(table.userId,table.remindAt)]);
 export const englishMessages = sqliteTable("english_messages", {
   id: text("id").primaryKey(), userId: text("user_id").notNull(), role: text("role").notNull(), text: text("text").notNull(),
   feedback: text("feedback").notNull(), createdAt: text("created_at").notNull(),

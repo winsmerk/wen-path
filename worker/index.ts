@@ -1,10 +1,12 @@
 /** Cloudflare Worker entry point for the vinext-starter template. */
 import { handleImageOptimization, DEFAULT_DEVICE_SIZES, DEFAULT_IMAGE_SIZES } from "vinext/server/image-optimization";
 import handler from "vinext/server/app-router-entry";
+import { dispatchDueMemos, ensureMemoSchema } from "../lib/memos";
 
 interface Env {
   ASSETS: Fetcher;
   DB: D1Database;
+  SERVERCHAN_SENDKEY?: string;
   IMAGES: {
     input(stream: ReadableStream): {
       transform(options: Record<string, unknown>): {
@@ -41,6 +43,9 @@ const worker = {
     }
 
     return handler.fetch(request, env, ctx);
+  },
+  async scheduled(_controller: { scheduledTime: number; cron: string }, env: Env, ctx: ExecutionContext) {
+    ctx.waitUntil(ensureMemoSchema(env.DB).then(() => dispatchDueMemos(env.DB, env.SERVERCHAN_SENDKEY)));
   },
 };
 

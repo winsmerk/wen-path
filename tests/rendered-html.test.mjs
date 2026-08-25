@@ -26,7 +26,7 @@ test("renders the LifeOS application shell", async () => {
 
 test("ships vision journey planning, reporting, and durable data declarations", async () => {
   const { readFile } = await import("node:fs/promises");
-  const [layout, page, lifeOS, planningUI, workspaceApi, planningApi, planningRecordsApi, speakingCoachApi, planningLib, journalApi, recordsApi, schema, workspaceLib, migration, recordsMigration, weekSelectionMigration, quotes, hosting] = await Promise.all([
+  const [layout, page, lifeOS, planningUI, workspaceApi, planningApi, planningRecordsApi, speakingCoachApi, planningLib, journalApi, recordsApi, schema, workspaceLib, migration, recordsMigration, weekSelectionMigration, quotes, hosting, memosApi, memosLib, memosMigration, worker, viteConfig] = await Promise.all([
     readFile(new URL("app/layout.tsx", templateRoot), "utf8"),
     readFile(new URL("app/page.tsx", templateRoot), "utf8"),
     readFile(new URL("app/LifeOS.tsx", templateRoot), "utf8"),
@@ -45,6 +45,11 @@ test("ships vision journey planning, reporting, and durable data declarations", 
     readFile(new URL("drizzle/0018_week_task_selection.sql", templateRoot), "utf8"),
     readFile(new URL("lib/su-shi-quotes.ts", templateRoot), "utf8"),
     readFile(new URL(".openai/hosting.json", templateRoot), "utf8"),
+    readFile(new URL("app/api/memos/route.ts", templateRoot), "utf8"),
+    readFile(new URL("lib/memos.ts", templateRoot), "utf8"),
+    readFile(new URL("drizzle/0019_memos.sql", templateRoot), "utf8"),
+    readFile(new URL("worker/index.ts", templateRoot), "utf8"),
+    readFile(new URL("vite.config.ts", templateRoot), "utf8"),
   ]);
   assert.match(layout, /const title = "wen flow · Build a life you love\."/);
   assert.match(page, /<LifeOS \/>/);
@@ -55,6 +60,10 @@ test("ships vision journey planning, reporting, and durable data declarations", 
   assert.match(lifeOS, /目标日期（可选）/);
   assert.match(lifeOS, /拥有自由选择工作与生活地点的能力/);
   assert.match(lifeOS, /当前财务情况/);
+  assert.match(lifeOS, /key: "memos"/);
+  assert.match(lifeOS, /title="备忘录"/);
+  assert.match(lifeOS, /发送测试消息/);
+  assert.match(lifeOS, /type="datetime-local"/);
   assert.match(lifeOS, /finance-detail-filters/);
   assert.match(lifeOS, /工资收入/);
   assert.match(lifeOS, /个人支出/);
@@ -169,6 +178,16 @@ test("ships vision journey planning, reporting, and durable data declarations", 
   assert.match(schema, /planning_reports_v2/);
   assert.match(schema, /planning_records_v2/);
   assert.match(schema, /week_selected/);
+  assert.match(schema, /sqliteTable\("memos"/);
+  assert.match(memosApi, /wechatConfigured/);
+  assert.match(memosApi, /test-wechat/);
+  assert.match(memosLib, /sctapi\.ftqq\.com/);
+  assert.match(memosLib, /dispatchDueMemos/);
+  assert.match(memosLib, /ensureMemoSchema/);
+  assert.match(memosMigration, /CREATE TABLE IF NOT EXISTS memos/);
+  assert.match(memosMigration, /idx_memos_due/);
+  assert.match(worker, /async scheduled/);
+  assert.match(viteConfig, /crons: \["\* \* \* \* \*"\]/);
   assert.match(migration, /CREATE TABLE IF NOT EXISTS journey_stages_v2/);
   assert.match(migration, /idx_instances_v2_occurrence/);
   assert.match(recordsMigration, /ALTER TABLE task_definitions_v2 ADD COLUMN record_required/);
