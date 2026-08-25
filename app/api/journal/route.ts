@@ -22,12 +22,14 @@ export async function POST(request: Request) {
   const { db, identity, media } = context;
   const form = await request.formData();
   const suppliedId = text(form, "id", 80);
-  const type = text(form, "type", 20);
+  const type = text(form, "type", 60);
   const title = text(form, "title", 120);
   const content = text(form, "content", 10000);
   const recordedAt = text(form, "recordedAt", 10);
   const files = form.getAll("images").filter((item): item is File => item instanceof File && item.size > 0);
-  if (!["diary", "inspiration"].includes(type) || !title || !content || !/^\d{4}-\d{2}-\d{2}$/.test(recordedAt)) {
+  const builtInType = type === "diary" || type === "inspiration";
+  const configuredType = builtInType ? null : await db.prepare("SELECT id FROM task_types_v2 WHERE user_id=? AND type_key=? LIMIT 1").bind(identity.userId, type).first();
+  if ((!builtInType && !configuredType) || !/^[a-z0-9_-]{1,60}$/.test(type) || !title || !content || !/^\d{4}-\d{2}-\d{2}$/.test(recordedAt)) {
     return NextResponse.json({ error: "missing_fields" }, { status: 400 });
   }
   if (files.length > 6 || files.some((file) => !file.type.startsWith("image/") || file.size > 8 * 1024 * 1024)) {

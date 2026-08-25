@@ -159,8 +159,9 @@ test("ships vision journey planning, reporting, and durable data declarations", 
   assert.match(lifeOS, /travel_expense/);
   assert.match(lifeOS, /六类支出累计/);
   assert.match(workspaceApi, /'travel_expense'/);
-  assert.match(lifeOS, /写一篇日记/);
-  assert.match(lifeOS, /记下灵感/);
+  assert.match(lifeOS, /＋ 添加记录/);
+  assert.match(lifeOS, /taskTypes\.map\(\(entry\) => \(\{ key: entry\.type_key/);
+  assert.match(lifeOS, /<select value=\{type\}/);
   assert.match(lifeOS, /删除记录/);
   assert.match(workspaceApi, /settleFinancialMonths/);
   assert.match(workspaceApi, /financial_monthly_bills/);
@@ -168,6 +169,7 @@ test("ships vision journey planning, reporting, and durable data declarations", 
   assert.match(workspaceLib, /DELETE FROM footprints/);
   assert.match(workspaceApi, /SET action_id=NULL/);
   assert.match(journalApi, /invalid_images/);
+  assert.match(journalApi, /SELECT id FROM task_types_v2 WHERE user_id=\? AND type_key=\?/);
   assert.match(journalApi, /DELETE/);
   assert.match(recordsApi, /record_images/);
   assert.match(recordsApi, /too_many_images/);
