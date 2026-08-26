@@ -111,6 +111,8 @@ test("ships vision journey planning, reporting, and durable data declarations", 
   assert.match(planningUI, /本周负载/);
   assert.match(planningUI, /勾选本周要完成的任务/);
   assert.match(planningUI, /taskModeLabel/);
+  assert.match(planningUI, /完成日期 · \{completionDateLabel\(item\.scheduled_date\)\}/);
+  assert.match(planningUI, /showMode showCompletionDate/);
   assert.match(planningUI, /开始时间/);
   assert.match(planningUI, /完成时间/);
   assert.match(planningUI, /month-stage-dates/);
