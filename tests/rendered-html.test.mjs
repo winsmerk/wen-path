@@ -183,9 +183,14 @@ test("ships vision journey planning, reporting, and durable data declarations", 
   assert.match(schema, /planning_records_v2/);
   assert.match(schema, /week_selected/);
   assert.match(schema, /sqliteTable\("memos"/);
-  assert.match(memosApi, /wechatConfigured/);
-  assert.match(memosApi, /test-wechat/);
-  assert.match(memosLib, /sctapi\.ftqq\.com/);
+  assert.match(lifeOS, /企业微信消息已连接/);
+  assert.match(lifeOS, /到时发送企业微信消息/);
+  assert.match(memosApi, /wecomConfigured/);
+  assert.match(memosApi, /test-wecom/);
+  assert.match(memosLib, /qyapi\.weixin\.qq\.com\/cgi-bin\/gettoken/);
+  assert.match(memosLib, /qyapi\.weixin\.qq\.com\/cgi-bin\/message\/send/);
+  assert.match(memosLib, /sendWeComMessage/);
+  assert.doesNotMatch(memosLib, /sctapi|ServerChan/);
   assert.match(memosLib, /dispatchDueMemos/);
   assert.match(memosLib, /ensureMemoSchema/);
   assert.match(memosMigration, /CREATE TABLE IF NOT EXISTS memos/);

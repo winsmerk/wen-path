@@ -1,6 +1,7 @@
 import { env } from "cloudflare:workers";
 import { headers } from "next/headers";
 import { vision40 } from "@/lib/vision-journeys";
+import type { WeComConfig } from "@/lib/memos";
 
 export type WorkspaceIdentity = {
   userId: string;
@@ -33,8 +34,9 @@ export function getOpenAIKey(): string | undefined {
   return env.OPENAI_API_KEY;
 }
 
-export function getServerChanSendKey(): string | undefined {
-  return env.SERVERCHAN_SENDKEY;
+export function getWeComConfig(): WeComConfig | undefined {
+  const corpId = env.WECOM_CORP_ID, agentId = env.WECOM_AGENT_ID, secret = env.WECOM_SECRET, userId = env.WECOM_USER_ID;
+  return corpId && agentId && secret && userId ? { corpId, agentId, secret, userId } : undefined;
 }
 
 export function getMediaBucket(): R2Bucket | null {

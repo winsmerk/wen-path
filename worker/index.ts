@@ -6,7 +6,10 @@ import { dispatchDueMemos, ensureMemoSchema } from "../lib/memos";
 interface Env {
   ASSETS: Fetcher;
   DB: D1Database;
-  SERVERCHAN_SENDKEY?: string;
+  WECOM_CORP_ID?: string;
+  WECOM_AGENT_ID?: string;
+  WECOM_SECRET?: string;
+  WECOM_USER_ID?: string;
   IMAGES: {
     input(stream: ReadableStream): {
       transform(options: Record<string, unknown>): {
@@ -45,7 +48,10 @@ const worker = {
     return handler.fetch(request, env, ctx);
   },
   async scheduled(_controller: { scheduledTime: number; cron: string }, env: Env, ctx: ExecutionContext) {
-    ctx.waitUntil(ensureMemoSchema(env.DB).then(() => dispatchDueMemos(env.DB, env.SERVERCHAN_SENDKEY)));
+    const config = env.WECOM_CORP_ID && env.WECOM_AGENT_ID && env.WECOM_SECRET && env.WECOM_USER_ID
+      ? { corpId: env.WECOM_CORP_ID, agentId: env.WECOM_AGENT_ID, secret: env.WECOM_SECRET, userId: env.WECOM_USER_ID }
+      : undefined;
+    ctx.waitUntil(ensureMemoSchema(env.DB).then(() => dispatchDueMemos(env.DB, config)));
   },
 };
 

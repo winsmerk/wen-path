@@ -32,5 +32,5 @@ interface R2Bucket {
 }
 
 declare module "cloudflare:workers" {
-  export const env: { DB: D1Database; MEDIA?: R2Bucket; OPENAI_API_KEY?: string; SERVERCHAN_SENDKEY?: string };
+  export const env: { DB: D1Database; MEDIA?: R2Bucket; OPENAI_API_KEY?: string; WECOM_CORP_ID?: string; WECOM_AGENT_ID?: string; WECOM_SECRET?: string; WECOM_USER_ID?: string };
 }
