@@ -165,16 +165,42 @@ export async function generatePlanInstances(db:D1Database,userId:string,period:s
     JOIN monthly_plan_goals_v2 pg ON pg.goal_id=t.goal_id AND pg.user_id=t.user_id
     WHERE t.user_id=? AND pg.plan_id=? AND t.enabled=1`).bind(userId,plan.id).all<DefinitionRow>();
   const now=new Date().toISOString();
+  const existing=await db.prepare("SELECT id,definition_id,scheduled_date,scheduled_time,status,user_adjusted,created_at FROM task_instances_v2 WHERE user_id=? AND plan_id=? AND source='system'").bind(userId,plan.id).all<{id:string;definition_id:string;scheduled_date:string;scheduled_time:string;status:string;user_adjusted:number;created_at:string}>();
   const inserts:D1PreparedStatement[]=[];
+  const deletes:D1PreparedStatement[]=[];
+  const existingByDefinition=new Map<string,typeof existing.results>();
+  for(const row of existing.results){const list=existingByDefinition.get(row.definition_id)||[];list.push(row);existingByDefinition.set(row.definition_id,list);}
   for(const task of tasks.results){
     const dates=candidateDates(task,period),times=parseList(task.times_json).map(String).filter((item)=>/^([01]\d|2[0-3]):[0-5]\d$/.test(item));
-    for(let index=0;index<dates.length;index++){
-      const date=dates[index],occurrenceKey=`${plan.id}:${task.id}:${date}:${index}`;
+    const desired=dates.map((date,index)=>({date,time:times.length?times[index%times.length]:"",occurrenceKey:`${plan.id}:${task.id}:${date}:${index}`}));
+    const desiredCounts=new Map<string,number>();
+    for(const item of desired){const key=`${item.date}|${item.time}`;desiredCounts.set(key,(desiredCounts.get(key)||0)+1);}
+    const rows=existingByDefinition.get(task.id)||[];
+    const rowsBySlot=new Map<string,typeof rows>();
+    for(const row of rows){const key=`${row.scheduled_date}|${row.scheduled_time}`;const list=rowsBySlot.get(key)||[];list.push(row);rowsBySlot.set(key,list);}
+    for(const [slot,slotRows] of rowsBySlot){
+      const keepCount=desiredCounts.get(slot)||0;
+      const ordered=[...slotRows].sort((a,b)=>Number(b.user_adjusted)-Number(a.user_adjusted)||Number(b.status==="completed")-Number(a.status==="completed")||a.created_at.localeCompare(b.created_at));
+      const kept=new Set(ordered.slice(0,keepCount).map((row)=>row.id));
+      for(const row of ordered){
+        if(kept.has(row.id)||row.user_adjusted)continue;
+        deletes.push(db.prepare("DELETE FROM task_instances_v2 WHERE id=? AND user_id=? AND source='system' AND user_adjusted=0").bind(row.id,userId));
+      }
+    }
+    for(let index=0;index<desired.length;index++){
+      const {date,time,occurrenceKey}=desired[index];
       inserts.push(db.prepare(`INSERT OR IGNORE INTO task_instances_v2
         (id,user_id,plan_id,goal_id,definition_id,title,type_key,scheduled_date,scheduled_time,estimated_minutes,priority,status,source,user_adjusted,occurrence_key,created_at,updated_at)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,'pending','system',0,?,?,?)`).bind(crypto.randomUUID(),userId,plan.id,task.goal_id,task.id,task.title,task.type_key,date,times.length?times[index%times.length]:"",task.estimated_minutes,task.priority,occurrenceKey,now,now));
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,'pending','system',0,?,?,?)`).bind(crypto.randomUUID(),userId,plan.id,task.goal_id,task.id,task.title,task.type_key,date,time,task.estimated_minutes,task.priority,occurrenceKey,now,now));
     }
   }
+  const desiredDefinitions=new Set(tasks.results.map((item)=>item.id));
+  for(const row of existing.results){
+    if(!desiredDefinitions.has(row.definition_id)&&row.user_adjusted===0&&row.status!=="completed"){
+      deletes.push(db.prepare("DELETE FROM task_instances_v2 WHERE id=? AND user_id=? AND source='system' AND user_adjusted=0").bind(row.id,userId));
+    }
+  }
+  if(deletes.length){for(let offset=0;offset<deletes.length;offset+=80)await db.batch(deletes.slice(offset,offset+80));}
   let created=0;
   for(let offset=0;offset<inserts.length;offset+=80){
     const results=await db.batch(inserts.slice(offset,offset+80));
