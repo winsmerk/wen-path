@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { executionPeriods, getD1, getWorkspaceIdentity } from "@/lib/workspace";
 import { ensurePlanningDerivedData, ensurePlanningSchema, generatePlanInstances, generateReports, planningSnapshot, seedPlanningTypes, syncPlanningProgress } from "@/lib/planning";
 
+import { enrollWorkRoutines } from "@/lib/work-routines";
+
 export const dynamic = "force-dynamic";
 
 function clean(value:unknown,length=800){return typeof value==="string"?value.trim().slice(0,length):"";}
@@ -24,7 +26,13 @@ export async function POST(request:Request){
   const context=await prepare();if(!context)return NextResponse.json({error:"unauthorized"},{status:401});
   const {db,identity}=context,userId=identity.userId,body=(await request.json()) as Record<string,unknown>,action=clean(body.action,60),now=new Date().toISOString();
 
-  if(action==="save-stage"){
+  if(action==="enroll-work-routines"){
+    const weekday=Number(body.weekday);
+    if(!Number.isInteger(weekday)||weekday<1||weekday>7)return NextResponse.json({error:"invalid_weekday"},{status:400});
+    const {localDate,month}=executionPeriods();
+    await enrollWorkRoutines(db,userId,localDate,month,weekday);
+    await generatePlanInstances(db,userId,month);
+  } else if(action==="save-stage"){
     const id=clean(body.id,100),title=clean(body.title,120),objective=clean(body.objective,1200),status=clean(body.status,20)||"planned",startDate=clean(body.startDate,10),endDate=clean(body.endDate,10);
     if(!title||!["planned","active","completed","paused"].includes(status)||!validDate(startDate)||!validDate(endDate))return NextResponse.json({error:"invalid_stage"},{status:400});
     if(id)await db.prepare("UPDATE journey_stages_v2 SET title=?,objective=?,status=?,start_date=?,end_date=?,updated_at=? WHERE id=? AND user_id=?").bind(title,objective,status,startDate||null,endDate||null,now,id,userId).run();

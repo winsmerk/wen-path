@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useState } from "react";
+import { workRoutines } from "@/lib/work-routines";
 import { dailySuShiQuote } from "@/lib/su-shi-quotes";
 
 export type Stage={id:string;title:string;objective:string;status:"planned"|"active"|"completed"|"paused";sort_order:number;start_date:string|null;end_date:string|null};
@@ -25,12 +26,22 @@ const completionDateLabel=(value:string)=>new Date(`${value}T00:00:00`).toLocale
 const taskModeLabel=(task?:TaskDefinition,source?:string)=>source==="manual"?"手动任务":!task?"模式未设置":task.mode==="once"?"单次任务":`周期任务 · ${task.frequency==="daily"?"每天":task.frequency==="weekly"?"每周":"每月"} ${task.occurrences} 次`;
 function safeList(value:string){try{const result=JSON.parse(value);return Array.isArray(result)?result:[];}catch{return [];}}
 
-export function PlanningToday({data,busy,mutate,onRecordsChanged}:{data:PlanningData;busy:boolean;mutate:PlanningMutate;onRecordsChanged:()=>Promise<void>}){
+export function PlanningToday({data,busy,mutate,onRecordsChanged,onNavigate}:{data:PlanningData;busy:boolean;mutate:PlanningMutate;onRecordsChanged:()=>Promise<void>;onNavigate:(tab:"records"|"journey"|"plan")=>void}){
+  const [workFilter,setWorkFilter]=useState<string>(""),[overseasDay,setOverseasDay]=useState(1);
+  const monthPlan=data.monthlyPlans.find((plan)=>plan.period===data.calendar.month);
+  const enrolled=workRoutines.every((routine)=>data.tasks.some((task)=>task.type_key===routine.key&&data.monthlyPlanGoals.some((link)=>link.plan_id===monthPlan?.id&&link.goal_id===task.goal_id)));
+  const visibleWork=data.taskInstances.filter((item)=>item.type_key===workFilter&&item.week_selected!==0&&(workFilter==="kinikini"?item.status!=="completed":workFilter==="overseas"?item.scheduled_date>=data.calendar.weekStart&&item.scheduled_date<=data.calendar.weekEnd:item.scheduled_date===data.calendar.localDate)).sort(compareTasks);
   const today=data.taskInstances.filter((item)=>item.scheduled_date===data.calendar.localDate&&item.week_selected!==0).sort(compareTasks);
   const week=data.taskInstances.filter((item)=>item.scheduled_date>=data.calendar.weekStart&&item.scheduled_date<=data.calendar.weekEnd&&item.status!=="completed"&&item.week_selected!==0).sort(compareTasks);
   const configured=data.capacityDays.reduce((sum,item)=>sum+(item.available?item.minutes:0),0)||420,planned=week.reduce((sum,item)=>sum+item.estimated_minutes,0),load=Math.round(planned/configured*100),health=load<=80?"健康":load<=100?"偏满":load<=120?"超额":"严重超额",quote=dailySuShiQuote(data.calendar.localDate);
   return <>
     <header className="page-header today-intro"><div><p>今天，把重要的事落到行动里</p></div><div className={`load-badge load-${health}`}>{health} · {load}%</div></header>
+    <section className="workbench-panel" aria-label="日常工作入口">
+      <div className="panel-heading"><div><span className="eyebrow">{data.calendar.localDate}</span><h2>今天的工作台</h2></div><button className="soft-button" onClick={()=>onNavigate("records")}>查看成果记录</button></div>
+      <div className="workbench-routines">{workRoutines.map((routine)=>{const scope=data.taskInstances.filter((item)=>item.type_key===routine.key&&item.week_selected!==0&&(routine.frequency==="daily"?item.scheduled_date===data.calendar.localDate:item.scheduled_date>=data.calendar.weekStart&&item.scheduled_date<=data.calendar.weekEnd));return <button key={routine.key} className={`workbench-routine ${workFilter===routine.key?"selected":""}`} aria-pressed={workFilter===routine.key} onClick={()=>setWorkFilter(workFilter===routine.key?"":routine.key)}><span className="type-token" style={{background:routine.color}}>{routine.icon}</span><strong>{routine.name}</strong><small>{routine.frequency==="daily"?"今日":routine.frequency==="weekly"?"本周":"项目下一步"} · {scope.length?`${scope.filter((item)=>item.status==="completed").length}/${scope.length} 完成`:"待安排"}</small><p>{routine.description}</p></button>;})}</div>
+      {!enrolled&&<div className="workbench-setup"><p>将五类工作加入本月计划。从今天起安排每日任务；时间与预计耗时可在计划中调整。</p><label>海外内容安排在 <select aria-label="海外内容每周执行日" value={overseasDay} onChange={(event)=>setOverseasDay(Number(event.target.value))}>{weekdays.map((day,index)=><option key={day} value={index+1}>{day}</option>)}</select></label><button className="primary-button" disabled={busy} onClick={()=>mutate({action:"enroll-work-routines",weekday:overseasDay},"五类工作已加入本月计划")}>{busy?"正在安排…":"加入本月计划"}</button></div>}
+      {workFilter&&<div className="workbench-detail"><div className="panel-heading"><h3>{workRoutines.find((item)=>item.key===workFilter)?.name}</h3><button className="soft-button" onClick={()=>onNavigate(workFilter==="kinikini"?"journey":"plan")}>管理计划</button></div>{visibleWork.length?visibleWork.map((item)=><InstanceRow key={item.id} item={item} data={data} busy={busy} mutate={mutate} onRecordsChanged={onRecordsChanged}/>):<p>当前没有已安排的任务。可在计划中查看、加入本周或调整日期。</p>}{workFilter==="kinikini"&&<p className="record-hint">关联项目：kinikini2.0。此处记录本轮行动，尚未自动读取项目执行进度。</p>}</div>}
+    </section>
     <section className="daily-poetry" aria-label="苏东坡每日一句"><span className="poetry-seal">苏</span><div><small>苏东坡 · 每日一句</small><blockquote>“{quote.text}”</blockquote><cite>—— 苏轼 {quote.source}</cite></div></section>
     <section className="today-planning-grid">
       <div className="planning-panel"><div className="panel-heading"><div><span className="eyebrow">今天</span><h3>{today.length} 项待办</h3></div><span>{today.filter((item)=>item.status==="completed").length}/{today.length} 完成</span></div>
@@ -55,9 +66,19 @@ function InstanceRow({item,data,busy,mutate,onRecordsChanged,compact=false,showM
 }
 
 function TaskRecordDialog({instance,types,onClose,onSaved,onDirectComplete}:{instance:TaskInstance;types:TaskType[];onClose:()=>void;onSaved:()=>Promise<void>;onDirectComplete:()=>Promise<void>}){
-  const [typeKey,setTypeKey]=useState(instance.type_key),[content,setContent]=useState(""),[duration,setDuration]=useState(instance.estimated_minutes),[feeling,setFeeling]=useState(""),[files,setFiles]=useState<File[]>([]),[busy,setBusy]=useState(false);
-  async function submit(event:FormEvent){event.preventDefault();setBusy(true);const form=new FormData();form.append("instanceId",instance.id);form.append("typeKey",typeKey);form.append("title",instance.title);form.append("content",content);form.append("duration",String(duration));form.append("feeling",feeling);form.append("recordedAt",new Date().toISOString().slice(0,10));files.forEach((file)=>form.append("images",file));const response=await fetch("/api/planning-records",{method:"POST",body:form});setBusy(false);if(response.ok)await onSaved();}
-  return <Dialog title="完成任务" onClose={onClose}><form onSubmit={submit}><p className="dialog-intro">可以为这次完成留下记录，也可以直接完成任务。</p><label><span>记录类型</span><select value={typeKey} onChange={(event)=>setTypeKey(event.target.value)}>{types.map((item)=><option key={item.id} value={item.type_key}>{item.icon} {item.name}</option>)}</select></label><label><span>记录内容（填写记录时必填）</span><textarea value={content} onChange={(event)=>setContent(event.target.value)} placeholder="写下完成内容、产出、感受或下一步…"/></label><div className="field-grid"><label><span>投入时间（分钟）</span><input type="number" min="0" max="1440" value={duration} onChange={(event)=>setDuration(Number(event.target.value))}/></label><label><span>补充感受（可选）</span><input value={feeling} onChange={(event)=>setFeeling(event.target.value)}/></label></div><label><span>上传图片（最多6张）</span><input className="file-input" type="file" accept="image/*" multiple onChange={(event)=>setFiles(Array.from(event.target.files??[]).slice(0,6))}/>{files.length>0&&<small className="file-note">已选择 {files.length} 张图片</small>}</label><div className="completion-actions"><button type="button" className="soft-button" disabled={busy} onClick={async()=>{setBusy(true);await onDirectComplete();setBusy(false);}}>直接完成</button><button className="primary-button" disabled={busy||!content.trim()}>{busy?"正在保存…":"保存记录并完成"}</button></div></form></Dialog>;
+  const [typeKey,setTypeKey]=useState(instance.type_key),[content,setContent]=useState(""),[duration,setDuration]=useState(instance.estimated_minutes),[feeling,setFeeling]=useState(""),[files,setFiles]=useState<File[]>([]),[busy,setBusy]=useState(false),[error,setError]=useState("");
+  async function submit(event:FormEvent){
+    event.preventDefault();setBusy(true);setError("");
+    try {
+      const form=new FormData();form.append("instanceId",instance.id);form.append("typeKey",typeKey);form.append("title",instance.title);form.append("content",content);form.append("duration",String(duration));form.append("feeling",feeling);form.append("recordedAt",instance.scheduled_date);files.forEach((file)=>form.append("images",file));
+      const response=await fetch("/api/planning-records",{method:"POST",body:form});
+      if(!response.ok){setError("保存失败，内容已保留。请检查图片大小或稍后重试。");return;}
+      await onSaved();
+    } catch {setError("连接失败，内容已保留，请稍后重试。");}
+    finally {setBusy(false);}
+  }
+
+  return <Dialog title="完成任务" onClose={onClose}><form onSubmit={submit}>{error&&<p role="alert">{error}</p>}<p className="dialog-intro">可以为这次完成留下记录，也可以直接完成任务。</p><label><span>记录类型</span><select value={typeKey} onChange={(event)=>setTypeKey(event.target.value)}>{types.map((item)=><option key={item.id} value={item.type_key}>{item.icon} {item.name}</option>)}</select></label><label><span>记录内容（填写记录时必填）</span><textarea value={content} onChange={(event)=>setContent(event.target.value)} placeholder="写下完成内容、产出、感受或下一步…"/></label><div className="field-grid"><label><span>投入时间（分钟）</span><input type="number" min="0" max="1440" value={duration} onChange={(event)=>setDuration(Number(event.target.value))}/></label><label><span>补充感受（可选）</span><input value={feeling} onChange={(event)=>setFeeling(event.target.value)}/></label></div><label><span>上传图片（最多6张）</span><input className="file-input" type="file" accept="image/*" multiple onChange={(event)=>setFiles(Array.from(event.target.files??[]).slice(0,6))}/>{files.length>0&&<small className="file-note">已选择 {files.length} 张图片</small>}</label><div className="completion-actions"><button type="button" className="soft-button" disabled={busy} onClick={async()=>{setBusy(true);await onDirectComplete();setBusy(false);}}>直接完成</button><button className="primary-button" disabled={busy||!content.trim()}>{busy?"正在保存…":"保存记录并完成"}</button></div></form></Dialog>;
 }
 
 export function JourneyManager({data,busy,mutate}:{data:PlanningData;busy:boolean;mutate:PlanningMutate}){

@@ -219,10 +219,13 @@ export default function LifeOS() {
 
   async function mutatePlanning(payload:Record<string,unknown>,success?:string){
     setSaving(true);
-    const response=await fetch("/api/planning",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(payload)});
-    if(!response.ok){setNotice("保存失败，请检查填写内容后重试。");setSaving(false);return false;}
-    setPlanning((await response.json()) as PlanningData);setSaving(false);
-    if(success){setNotice(success);window.setTimeout(()=>setNotice(""),2800);}return true;
+    try {
+      const response=await fetch("/api/planning",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(payload)});
+      if(!response.ok){setNotice("保存失败，请检查填写内容后重试。");return false;}
+      setPlanning((await response.json()) as PlanningData);
+      if(success){setNotice(success);window.setTimeout(()=>setNotice(""),2800);}return true;
+    } catch { setNotice("暂时无法连接，请稍后重试。你的安排尚未确认保存。");return false; }
+    finally { setSaving(false); }
   }
 
   if (loading) return <Loading />;
@@ -260,7 +263,7 @@ export default function LifeOS() {
       <main className="main-content">
         {notice && <div className="toast" role="status">{notice}</div>}
         <MobileHeader />
-        {tab === "today" && <PlanningToday data={planning} busy={saving} mutate={mutatePlanning} onRecordsChanged={load}/>}
+        {tab === "today" && <PlanningToday data={planning} busy={saving} mutate={mutatePlanning} onRecordsChanged={load} onNavigate={setTab}/>}
         {tab === "vision" && <Vision profile={workspace.profile} planning={planning} busy={saving} mutate={mutate} />}
         {tab === "journey" && <JourneyManager data={planning} busy={saving} mutate={mutatePlanning}/>}
         {tab === "plan" && <PlanManager data={planning} busy={saving} mutate={mutatePlanning} onRecordsChanged={load}/>}

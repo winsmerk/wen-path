@@ -138,7 +138,7 @@ function candidateDates(task:DefinitionRow, period:string) {
   const total=daysInPeriod(period), all=Array.from({length:total},(_,index)=>`${period}-${String(index+1).padStart(2,"0")}`)
     .filter((date)=>(!task.start_date||date>=task.start_date)&&(!task.end_date||date<=task.end_date));
   if(task.mode==="once") {
-    if(task.scheduled_date&&task.scheduled_date.startsWith(period)) return [task.scheduled_date];
+    if(task.scheduled_date) return task.scheduled_date.startsWith(period)?[task.scheduled_date]:[];
     return all.length?[all[hash(task.id+period)%all.length]]:[];
   }
   const count=Math.max(1,Math.min(10,Number(task.occurrences)||1));
@@ -149,7 +149,8 @@ function candidateDates(task:DefinitionRow, period:string) {
     for(const date of all){const d=new Date(`${date}T00:00:00Z`);const key=mondayOf(d);const list=weeks.get(key)||[];list.push(date);weeks.set(key,list);}
     return [...weeks.values()].flatMap((dates,weekIndex)=>{
       const chosen=wanted.length?dates.filter((date)=>{const day=new Date(`${date}T00:00:00Z`).getUTCDay();return (day===0?7:day)&&wanted.includes(day===0?7:day);}):[];
-      const pool=chosen.length?chosen:dates;
+      const pool=wanted.length?chosen:dates;
+      if(!pool.length)return [];
       return Array.from({length:count},(_,index)=>pool[(hash(task.id)+weekIndex+index*Math.max(1,Math.floor(pool.length/count)))%pool.length]);
     });
   }
@@ -183,7 +184,7 @@ export async function generatePlanInstances(db:D1Database,userId:string,period:s
       const ordered=[...slotRows].sort((a,b)=>Number(b.user_adjusted)-Number(a.user_adjusted)||Number(b.status==="completed")-Number(a.status==="completed")||a.created_at.localeCompare(b.created_at));
       const kept=new Set(ordered.slice(0,keepCount).map((row)=>row.id));
       for(const row of ordered){
-        if(kept.has(row.id)||row.user_adjusted)continue;
+        if(kept.has(row.id)||row.user_adjusted||row.status==="completed")continue;
         deletes.push(db.prepare("DELETE FROM task_instances_v2 WHERE id=? AND user_id=? AND source='system' AND user_adjusted=0").bind(row.id,userId));
       }
     }
