@@ -1,7 +1,6 @@
 /** Cloudflare Worker entry point for the vinext-starter template. */
 import { handleImageOptimization, DEFAULT_DEVICE_SIZES, DEFAULT_IMAGE_SIZES } from "vinext/server/image-optimization";
 import handler from "vinext/server/app-router-entry";
-import { dispatchDueMemos, ensureMemoSchema } from "../lib/memos";
 
 interface Env {
   ASSETS: Fetcher;
@@ -47,12 +46,7 @@ const worker = {
 
     return handler.fetch(request, env, ctx);
   },
-  async scheduled(_controller: { scheduledTime: number; cron: string }, env: Env, ctx: ExecutionContext) {
-    const config = env.WECOM_CORP_ID && env.WECOM_AGENT_ID && env.WECOM_SECRET && env.WECOM_USER_ID
-      ? { corpId: env.WECOM_CORP_ID, agentId: env.WECOM_AGENT_ID, secret: env.WECOM_SECRET, userId: env.WECOM_USER_ID }
-      : undefined;
-    ctx.waitUntil(ensureMemoSchema(env.DB).then(() => dispatchDueMemos(env.DB, config)));
-  },
+  async scheduled() { /* Memo reminders are retired. */ },
 };
 
 export default worker;

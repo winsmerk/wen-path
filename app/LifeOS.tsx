@@ -2,6 +2,8 @@
 
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { JourneyManager, PlanManager, PlanningData, PlanningRecord, PlanningReport, PlanningToday, TaskType } from "@/app/PlanningSystem";
+import ContentHub from "@/app/ContentHub";
+import { useContentTools } from "@/app/useContentTools";
 import { dailySuShiQuote } from "@/lib/su-shi-quotes";
 
 type Profile = {
@@ -126,17 +128,17 @@ type Workspace = {
   stopRuleEvents:Array<{id:string;week_start:string;rule_code:string;severity:"adjust"|"stop";reason:string;created_at:string}>;
 };
 
-type Tab = "today" | "vision" | "journey" | "plan" | "memos" | "records" | "finance" | "tools" | "review";
+type Tab = "today" | "vision" | "journey" | "plan" | "vocabulary" | "records" | "finance" | "media" | "review";
 
 const tabs: { key: Tab; label: string; mark: string }[] = [
   { key: "today", label: "今日", mark: "⌂" },
   { key: "vision", label: "愿景", mark: "✦" },
   { key: "journey", label: "征程", mark: "◎" },
   { key: "plan", label: "计划", mark: "◫" },
-  { key: "memos", label: "备忘", mark: "◷" },
+  { key: "vocabulary", label: "生词表", mark: "Aa" },
   { key: "records", label: "记录", mark: "+" },
   { key: "finance", label: "财务", mark: "¥" },
-  { key: "tools", label: "工具", mark: "◇" },
+  { key: "media", label: "自媒体", mark: "✎" },
   { key: "review", label: "复盘", mark: "↗" },
 ];
 
@@ -151,6 +153,7 @@ const areaTone: Record<string, string> = {
 };
 
 export default function LifeOS() {
+  useContentTools();
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [planning, setPlanning] = useState<PlanningData | null>(null);
   const [tab, setTab] = useState<Tab>("today");
@@ -158,6 +161,10 @@ export default function LifeOS() {
   const [saving, setSaving] = useState(false);
   const [notice, setNotice] = useState("");
   const [checkinType, setCheckinType] = useState<Checkin["type"] | null>(null);
+
+  useEffect(()=>{const section=new URLSearchParams(window.location.search).get("section");if(section==="records"||section==="media"||section==="vocabulary")setTab(section);},[]);
+
+  useEffect(()=>{const refresh=(event:Event)=>{const detail=(event as CustomEvent).detail;setTab(detail.section);};window.addEventListener('wen-path-content-updated',refresh);return ()=>window.removeEventListener('wen-path-content-updated',refresh);},[]);
 
   const loadWorkspace = useCallback(async () => {
     const response=await fetch("/api/workspace",{cache:"no-store"});
@@ -267,10 +274,10 @@ export default function LifeOS() {
         {tab === "vision" && <Vision profile={workspace.profile} planning={planning} busy={saving} mutate={mutate} />}
         {tab === "journey" && <JourneyManager data={planning} busy={saving} mutate={mutatePlanning}/>}
         {tab === "plan" && <PlanManager data={planning} busy={saving} mutate={mutatePlanning} onRecordsChanged={load}/>}
-        {tab === "memos" && <MemoPanel />}
-        {tab === "records" && <Records items={workspace.checkins} outputs={workspace.taskOutputs} planningRecords={planning.records} taskTypes={planning.taskTypes} journals={workspace.journalEntries} journalImages={workspace.journalImages} recordImages={workspace.recordImages} onReload={load} />}
+        {tab === "vocabulary" && <ContentHub key="vocabulary" mode="vocabulary" />}
+        {tab === "records" && <ContentHub key="records" mode="records" />}
         {tab === "finance" && <Finance records={workspace.financialRecords} bills={workspace.financialMonthlyBills} busy={saving} mutate={mutate} />}
-        {tab === "tools" && <Tools messages={workspace.englishMessages} busy={saving} mutate={mutate} onReload={loadWorkspace} />}
+        {tab === "media" && <ContentHub key="media" mode="media" />}
         {tab === "review" && (
           <ReviewPanel
             completedActions={completedActions}
@@ -569,147 +576,6 @@ function ExecutionHistory({cycles,actions,outcomes,busy,mutate}:{cycles:WeeklyCy
 
 function taskTypeLabel(type: Action["task_type"]) { return { reading: "阅读", finance: "财务", exercise: "运动", english: "英语", account_operation: "账号运营", general: "通用" }[type]; }
 
-type RecordFilter = "all" | "diary" | "inspiration" | string;
-
-function legacyRecordType(type: Checkin["type"] | TaskOutput["task_type"]) {
-  if (type === "exercise") return "health";
-  if (type === "reading" || type === "english") return "learning";
-  if (type === "account_operation") return "creation";
-  if (type === "general") return "other";
-  return type;
-}
-
-function standaloneRecordMeta(typeKey: string, taskTypes: TaskType[]) {
-  if (typeKey === "diary") return { label: "日记", icon: "记", color: "" };
-  if (typeKey === "inspiration") return { label: "灵感", icon: "✦", color: "" };
-  const type = taskTypes.find((item) => item.type_key === typeKey);
-  return { label: type?.name || "其他记录", icon: type?.icon || "·", color: type?.color || "#777" };
-}
-
-function Records({ items, outputs, planningRecords, taskTypes, journals, journalImages, recordImages, onReload }: { items: Checkin[]; outputs: TaskOutput[]; planningRecords: PlanningRecord[]; taskTypes: TaskType[]; journals: JournalEntry[]; journalImages: JournalImage[]; recordImages: RecordImage[]; onReload: () => Promise<void> }) {
-  const [filter, setFilter] = useState<RecordFilter>("all");
-  const [editingJournal, setEditingJournal] = useState<JournalEntry | "new" | null>(null);
-  const [editingRecord, setEditingRecord] = useState<{ type: "checkin"; item: Checkin } | { type: "task_output"; item: TaskOutput } | null>(null);
-  const [editingPlanningRecord, setEditingPlanningRecord] = useState<PlanningRecord | null>(null);
-  const visibleCheckins = filter === "all" ? items : items.filter((item) => legacyRecordType(item.type) === filter);
-  const visibleOutputs = filter === "all" ? outputs : outputs.filter((item) => legacyRecordType(item.task_type) === filter);
-  const visiblePlanningRecords = filter === "all" ? planningRecords : planningRecords.filter((item) => item.type_key === filter);
-  const visibleJournals = filter === "all" ? journals : journals.filter((item) => item.type === filter);
-  const enabledTypes = taskTypes.filter((item) => item.enabled);
-  const hasRecords = visibleCheckins.length + visibleOutputs.length + visiblePlanningRecords.length + visibleJournals.length > 0;
-  const filters: Array<[RecordFilter, string]> = [["all", "全部"], ...enabledTypes.map((item) => [item.type_key, `${item.icon} ${item.name}`] as [string,string]), ["diary", "日记"], ["inspiration", "灵感"]];
-  const typeCount = (key:string) => planningRecords.filter((item)=>item.type_key===key).length + items.filter((item)=>legacyRecordType(item.type)===key).length + outputs.filter((item)=>legacyRecordType(item.task_type)===key).length + journals.filter((item)=>item.type===key).length;
-  const lifeRecordCount = journals.filter((item)=>item.type==="diary"||item.type==="inspiration").length;
-  return <>
-    <PageHeader kicker="行动留下痕迹" title="记录"><button className="primary-button" onClick={() => setEditingJournal("new")}>＋ 添加记录</button></PageHeader>
-    <div className="record-summary">{enabledTypes.slice(0,3).map((type)=><article key={type.id}><span className="quick-icon" style={{background:type.color}}>{type.icon}</span><div><small>{type.name}记录</small><b>{typeCount(type.type_key)} <em>条</em></b></div></article>)}<article><span className="quick-icon diary">记</span><div><small>日记与灵感</small><b>{lifeRecordCount} <em>条记录</em></b></div></article></div>
-    <div className="filter-row record-filters" aria-label="记录模块筛选">{filters.map(([key, label]) => <button key={key} className={filter === key ? "active" : ""} onClick={() => setFilter(key)}>{label}</button>)}</div>
-    {!hasRecords && <section className="record-list"><div className="empty-list"><b>这个模块还没有记录</b><p>留下第一条行动、日记或灵感。</p></div></section>}
-    {visibleJournals.length > 0 && <section className="record-list journal-list"><div className="section-heading"><div><span className="eyebrow">自主记录</span><h3>按你选择的类型归档</h3></div></div>{visibleJournals.map((item) => { const images = journalImages.filter((image) => image.journal_id === item.id), meta = standaloneRecordMeta(item.type, taskTypes); return <article key={item.id} className="journal-record"><span className={`record-mark ${item.type}`} style={meta.color?{background:meta.color,color:"white"}:undefined}>{meta.icon}</span><div><div className="journal-title-row"><b>{item.title}</b><button className="text-button" onClick={() => setEditingJournal(item)}>编辑</button></div><p>{item.content}</p>{images.length > 0 && <div className="journal-gallery">{images.map((image) => <img key={image.id} src={`/api/journal-image/${image.id}`} alt={`${item.title}配图`} loading="lazy" />)}</div>}</div><span><b>{meta.label}</b><small>{new Date(`${item.recorded_at}T00:00:00`).toLocaleDateString("zh-CN")}</small></span></article>; })}</section>}
-    {visibleCheckins.length > 0 && <section className="record-list"><div className="section-heading"><div><span className="eyebrow">行动记录</span><h3>每一次行动都在形成证据</h3></div></div>{visibleCheckins.map((item) => { const images = recordImages.filter((image) => image.record_type === "checkin" && image.record_id === item.id); return <article key={item.id}><span className={`record-mark ${item.type}`}>{item.type === "exercise" ? "↗" : item.type === "reading" ? "书" : "Aa"}</span><div><div className="journal-title-row"><b>{item.type === "exercise" ? "完成一次运动" : item.type === "reading" ? "提交一篇读书笔记" : "提交一篇英语学习笔记"}</b><button className="text-button" onClick={() => setEditingRecord({ type: "checkin", item })}>编辑</button></div><p>{item.note || "只记录完成，不给今天增加负担"}</p><RecordImageGallery images={images} title="行动记录" /></div><span><b>{item.duration}分钟</b><small>{new Date(item.created_at).toLocaleDateString("zh-CN")}</small></span></article>; })}</section>}
-    {visiblePlanningRecords.length > 0 && <section className="record-list output-list"><div className="section-heading"><div><span className="eyebrow">任务记录</span><h3>按任务类型归档的完成记录</h3></div></div>{visiblePlanningRecords.map((item)=>{const type=taskTypes.find((entry)=>entry.type_key===item.type_key);return <article key={item.id}><span className="record-mark" style={{background:type?.color||"#777",color:"white"}}>{type?.icon||"·"}</span><div><div className="journal-title-row"><b>{item.title}</b><button className="text-button" onClick={()=>setEditingPlanningRecord(item)}>编辑</button></div><p>{item.content}</p>{item.feeling&&<small>{item.feeling}</small>}<RecordImageGallery images={recordImages.filter((image)=>image.record_type==="planning_record"&&image.record_id===item.id)} title={item.title}/></div><span><b>{type?.name||"其他"}</b><small>{new Date(`${item.recorded_at}T00:00:00`).toLocaleDateString("zh-CN")}</small></span></article>})}</section>}
-    <TaskOutputList outputs={visibleOutputs} images={recordImages} onEdit={(item) => setEditingRecord({ type: "task_output", item })} />
-    {editingJournal && <JournalDialog item={typeof editingJournal === "object" ? editingJournal : undefined} taskTypes={enabledTypes} onClose={() => setEditingJournal(null)} onSaved={async () => { setEditingJournal(null); await onReload(); }} />}
-    {editingRecord && <RecordEditDialog record={editingRecord} imageCount={recordImages.filter((image) => image.record_type === editingRecord.type && image.record_id === editingRecord.item.id).length} onClose={() => setEditingRecord(null)} onSaved={async () => { setEditingRecord(null); await onReload(); }} />}
-    {editingPlanningRecord&&<PlanningRecordEditDialog item={editingPlanningRecord} taskTypes={enabledTypes} imageCount={recordImages.filter((image)=>image.record_type==="planning_record"&&image.record_id===editingPlanningRecord.id).length} onClose={()=>setEditingPlanningRecord(null)} onSaved={async()=>{setEditingPlanningRecord(null);await onReload();}}/>}
-  </>;
-}
-
-function RecordImageGallery({ images, title }: { images: RecordImage[]; title: string }) {
-  if (!images.length) return null;
-  return <div className="journal-gallery">{images.map((image) => <img key={image.id} src={`/api/record-image/${image.id}`} alt={`${title}配图`} loading="lazy" />)}</div>;
-}
-
-function TaskOutputList({ outputs, images, onEdit }: { outputs: TaskOutput[]; images: RecordImage[]; onEdit: (item: TaskOutput) => void }) {
-  if (!outputs.length) return null;
-  return <section className="record-list output-list"><div className="section-heading"><div><span className="eyebrow">任务成果</span><h3>完成不只是打勾</h3></div></div>{outputs.slice(0, 12).map((item) => <article key={item.id}><span className={`record-mark ${item.task_type}`}>{item.task_type === "reading" ? "书" : item.task_type === "finance" ? "¥" : item.task_type === "exercise" ? "↗" : item.task_type === "english" ? "Aa" : item.task_type === "account_operation" ? "号" : "✓"}</span><div><div className="journal-title-row"><b>{item.title}</b><button className="text-button" onClick={() => onEdit(item)}>编辑</button></div><p>{item.content || item.feeling || "已记录完成成果"}</p><RecordImageGallery images={images.filter((image) => image.record_type === "task_output" && image.record_id === item.id)} title={item.title} /></div><span><b>{taskTypeLabel(item.task_type)}</b><small>{new Date(item.created_at).toLocaleDateString("zh-CN")}</small></span></article>)}</section>;
-}
-
-function RecordEditDialog({ record, imageCount, onClose, onSaved }: { record: { type: "checkin"; item: Checkin } | { type: "task_output"; item: TaskOutput }; imageCount: number; onClose: () => void; onSaved: () => Promise<void> }) {
-  const checkin = record.type === "checkin" ? record.item : null;
-  const output = record.type === "task_output" ? record.item : null;
-  const [title, setTitle] = useState(output?.title ?? "");
-  const [content, setContent] = useState(checkin?.note ?? output?.content ?? "");
-  const [feeling, setFeeling] = useState(output?.feeling ?? "");
-  const [duration, setDuration] = useState(checkin?.duration ?? output?.duration ?? 0);
-  const [recordedAt, setRecordedAt] = useState(record.item.created_at.slice(0, 10));
-  const [files, setFiles] = useState<File[]>([]);
-  const [busy, setBusy] = useState(false);
-  const [confirmDelete, setConfirmDelete] = useState(false);
-  const taskType = checkin?.type ?? output?.task_type ?? "general";
-  async function submit(event: FormEvent) {
-    event.preventDefault(); setBusy(true);
-    const form = new FormData(); form.append("recordType", record.type); form.append("id", record.item.id); form.append("title", title); form.append("note", content); form.append("content", content); form.append("feeling", feeling); form.append("duration", String(duration)); form.append("recordedAt", recordedAt); files.forEach((file) => form.append("images", file));
-    const response = await fetch("/api/records", { method: "POST", body: form }); setBusy(false); if (response.ok) await onSaved();
-  }
-  async function remove() { setBusy(true); const response = await fetch(`/api/records?recordType=${record.type}&id=${encodeURIComponent(record.item.id)}`, { method: "DELETE" }); setBusy(false); if (response.ok) await onSaved(); }
-  const contentRequired = taskType === "reading" || taskType === "english" || taskType === "account_operation";
-  const exerciseRequired = taskType === "exercise";
-  return <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><form className="dialog journal-dialog" onSubmit={submit}><button type="button" className="dialog-close" onClick={onClose}>×</button><span className="eyebrow">{record.type === "checkin" ? "行动记录" : "任务成果"}</span><h2>编辑记录</h2>{output && <label><span>标题</span><input required value={title} onChange={(event) => setTitle(event.target.value)} /></label>}<label><span>日期</span><input type="date" required value={recordedAt} onChange={(event) => setRecordedAt(event.target.value)} /></label><label><span>{taskType === "reading" ? "读书笔记" : taskType === "english" ? "英语学习笔记" : taskType === "account_operation" ? "账号运营成果" : taskType === "exercise" ? "运动记录" : "记录内容"}</span><textarea required={contentRequired} value={content} onChange={(event) => setContent(event.target.value)} /></label>{exerciseRequired && <label><span>运动感受</span><textarea required value={feeling} onChange={(event) => setFeeling(event.target.value)} /></label>}<label><span>时长（分钟）</span><input type="number" min="0" max="600" value={duration} onChange={(event) => setDuration(Number(event.target.value))} /></label><label><span>追加图片（已有 {imageCount}/6 张）</span><input className="file-input" type="file" accept="image/*" multiple disabled={imageCount >= 6} onChange={(event) => setFiles(Array.from(event.target.files ?? []).slice(0, Math.max(0, 6 - imageCount)))} />{files.length > 0 && <small className="file-note">将追加 {files.length} 张图片</small>}</label><div className="dialog-actions"><button type="button" className={confirmDelete ? "danger-button confirm" : "danger-button"} disabled={busy} onClick={() => confirmDelete ? remove() : setConfirmDelete(true)}>{confirmDelete ? "再次点击确认删除" : "删除记录"}</button><button className="primary-button" disabled={busy || (contentRequired && !content.trim()) || (exerciseRequired && (!duration || !feeling.trim()))}>{busy ? "正在保存…" : "保存修改"}</button></div></form></div>;
-}
-
-function PlanningRecordEditDialog({item,taskTypes,imageCount,onClose,onSaved}:{item:PlanningRecord;taskTypes:TaskType[];imageCount:number;onClose:()=>void;onSaved:()=>Promise<void>}) {
-  const [typeKey,setTypeKey]=useState(item.type_key),[content,setContent]=useState(item.content),[duration,setDuration]=useState(item.duration),[feeling,setFeeling]=useState(item.feeling),[recordedAt,setRecordedAt]=useState(item.recorded_at),[files,setFiles]=useState<File[]>([]),[busy,setBusy]=useState(false),[confirmDelete,setConfirmDelete]=useState(false);
-  async function submit(event:FormEvent){event.preventDefault();setBusy(true);const form=new FormData();form.append("id",item.id);form.append("instanceId",item.instance_id);form.append("typeKey",typeKey);form.append("title",item.title);form.append("content",content);form.append("duration",String(duration));form.append("feeling",feeling);form.append("recordedAt",recordedAt);files.forEach((file)=>form.append("images",file));const response=await fetch("/api/planning-records",{method:"POST",body:form});setBusy(false);if(response.ok)await onSaved();}
-  async function remove(){setBusy(true);const response=await fetch(`/api/planning-records?id=${encodeURIComponent(item.id)}`,{method:"DELETE"});setBusy(false);if(response.ok)await onSaved();}
-  // eslint-disable-next-line jsx-a11y/no-static-element-interactions
-  return <div className="dialog-backdrop" onMouseDown={(event)=>{if(event.target===event.currentTarget)onClose();}}><form className="dialog journal-dialog" onSubmit={submit}><button type="button" className="dialog-close" onClick={onClose}>×</button><span className="eyebrow">任务记录</span><h2>编辑记录</h2><label><span>记录类型</span><select value={typeKey} onChange={(event)=>setTypeKey(event.target.value)}>{taskTypes.map((type)=><option key={type.id} value={type.type_key}>{type.icon} {type.name}</option>)}</select></label><label><span>日期</span><input type="date" required value={recordedAt} onChange={(event)=>setRecordedAt(event.target.value)}/></label><label><span>记录内容</span><textarea required value={content} onChange={(event)=>setContent(event.target.value)}/></label><div className="field-grid"><label><span>投入时间（分钟）</span><input type="number" min="0" max="1440" value={duration} onChange={(event)=>setDuration(Number(event.target.value))}/></label><label><span>感受（可选）</span><input value={feeling} onChange={(event)=>setFeeling(event.target.value)}/></label></div><label><span>追加图片（已有 {imageCount}/6 张）</span><input className="file-input" type="file" accept="image/*" multiple disabled={imageCount>=6} onChange={(event)=>setFiles(Array.from(event.target.files??[]).slice(0,Math.max(0,6-imageCount)))}/></label><div className="dialog-actions"><button type="button" className={confirmDelete?"danger-button confirm":"danger-button"} disabled={busy} onClick={()=>confirmDelete?remove():setConfirmDelete(true)}>{confirmDelete?"再次点击确认删除":"删除记录"}</button><button className="primary-button" disabled={busy||!content.trim()}>{busy?"正在保存…":"保存修改"}</button></div></form></div>;
-}
-
-function JournalDialog({ item, taskTypes, onClose, onSaved }: { item?: JournalEntry; taskTypes: TaskType[]; onClose: () => void; onSaved: () => Promise<void> }) {
-  const [type, setType] = useState(item?.type ?? "diary");
-  const [title, setTitle] = useState(item?.title ?? "");
-  const [content, setContent] = useState(item?.content ?? "");
-  const [recordedAt, setRecordedAt] = useState(item?.recorded_at ?? new Date().toISOString().slice(0, 10));
-  const [files, setFiles] = useState<File[]>([]);
-  const [busy, setBusy] = useState(false);
-  const [confirmDelete, setConfirmDelete] = useState(false);
-  const recordTypes = [
-    { key: "diary", label: "日记", icon: "记" },
-    { key: "inspiration", label: "灵感", icon: "✦" },
-    ...taskTypes.map((entry) => ({ key: entry.type_key, label: entry.name, icon: entry.icon })),
-  ];
-  if (item && !recordTypes.some((entry) => entry.key === item.type)) recordTypes.push({ key: item.type, label: "其他记录", icon: "·" });
-  const selectedType = recordTypes.find((entry) => entry.key === type) ?? recordTypes[0];
-  async function submit(event: FormEvent) {
-    event.preventDefault(); setBusy(true);
-    const form = new FormData(); if (item) form.append("id", item.id); form.append("type", type); form.append("title", title); form.append("content", content); form.append("recordedAt", recordedAt); files.forEach((file) => form.append("images", file));
-    const response = await fetch("/api/journal", { method: "POST", body: form }); setBusy(false); if (response.ok) await onSaved();
-  }
-  async function remove() { if (!item) return; setBusy(true); const response = await fetch(`/api/journal?id=${encodeURIComponent(item.id)}`, { method: "DELETE" }); setBusy(false); if (response.ok) await onSaved(); }
-  return <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><form className="dialog journal-dialog" onSubmit={submit}><button type="button" className="dialog-close" onClick={onClose}>×</button><span className="eyebrow">自主记录</span><h2>{item ? "编辑记录" : "添加记录"}</h2><label><span>记录类型</span><select value={type} onChange={(event) => setType(event.target.value)}>{recordTypes.map((entry)=><option key={entry.key} value={entry.key}>{entry.icon} {entry.label}</option>)}</select></label><label><span>标题</span><input required maxLength={120} value={title} onChange={(event) => setTitle(event.target.value)} placeholder={`为这条${selectedType.label}写个标题`} /></label><label><span>日期</span><input type="date" required value={recordedAt} onChange={(event) => setRecordedAt(event.target.value)} /></label><label><span>内容</span><textarea required value={content} onChange={(event) => setContent(event.target.value)} placeholder={`写下这条${selectedType.label}的内容…`} /></label><label><span>上传图片（最多6张，每张不超过8MB）</span><input className="file-input" type="file" accept="image/*" multiple onChange={(event) => setFiles(Array.from(event.target.files ?? []).slice(0, 6))} />{files.length > 0 && <small className="file-note">已选择 {files.length} 张图片</small>}</label><div className="dialog-actions">{item ? <button type="button" className={confirmDelete ? "danger-button confirm" : "danger-button"} disabled={busy} onClick={() => confirmDelete ? remove() : setConfirmDelete(true)}>{confirmDelete ? "再次点击确认删除" : "删除记录"}</button> : <span />}<button className="primary-button" disabled={busy || !title.trim() || !content.trim()}>{busy ? "正在保存…" : "保存记录"}</button></div></form></div>;
-}
-
-function Tools({messages,busy,mutate,onReload}:{messages:EnglishMessage[];busy:boolean;mutate:(payload:Record<string,unknown>,success?:string)=>Promise<boolean>;onReload:()=>Promise<void>}) {
-  return <><PageHeader kicker="专注练习与辅助能力" title="工具"><span className="tool-count">1 个可用工具</span></PageHeader><section className="tools-intro"><span>◇</span><div><b>英语口语练习</b><p>独立于记录模块运行。这里负责对话、纠正、朗读和语音输入；学习记录仍在完成对应任务时提交。</p></div></section><EnglishCoach messages={messages} busy={busy} mutate={mutate} onReload={onReload}/></>;
-}
-
-async function audioBlobToWav(blob:Blob){
-  const context=new AudioContext(),decoded=await context.decodeAudioData(await blob.arrayBuffer()),length=decoded.length,channels=decoded.numberOfChannels,rate=decoded.sampleRate,buffer=new ArrayBuffer(44+length*2),view=new DataView(buffer);
-  const write=(offset:number,value:string)=>{for(let index=0;index<value.length;index++)view.setUint8(offset+index,value.charCodeAt(index));};
-  write(0,"RIFF");view.setUint32(4,36+length*2,true);write(8,"WAVE");write(12,"fmt ");view.setUint32(16,16,true);view.setUint16(20,1,true);view.setUint16(22,1,true);view.setUint32(24,rate,true);view.setUint32(28,rate*2,true);view.setUint16(32,2,true);view.setUint16(34,16,true);write(36,"data");view.setUint32(40,length*2,true);
-  const sources=Array.from({length:channels},(_,index)=>decoded.getChannelData(index));let offset=44;
-  for(let frame=0;frame<length;frame++){let sample=0;for(const source of sources)sample+=source[frame]/channels;sample=Math.max(-1,Math.min(1,sample));view.setInt16(offset,sample<0?sample*0x8000:sample*0x7fff,true);offset+=2;}
-  await context.close();return new Blob([buffer],{type:"audio/wav"});
-}
-
-function EnglishCoach({ messages, busy, mutate, onReload }: { messages: EnglishMessage[]; busy: boolean; mutate: (payload: Record<string, unknown>, success?: string) => Promise<boolean>; onReload:()=>Promise<void> }) {
-  const [message, setMessage] = useState("");
-  const [recording,setRecording]=useState(false),[recordedAudio,setRecordedAudio]=useState<Blob|null>(null),[audioSeconds,setAudioSeconds]=useState(0),[sendingAudio,setSendingAudio]=useState(false),[audioError,setAudioError]=useState("");
-  const recorderRef=useRef<MediaRecorder|null>(null),streamRef=useRef<MediaStream|null>(null),chunksRef=useRef<Blob[]>([]),timerRef=useRef<ReturnType<typeof setInterval>|null>(null);
-  const latestReply = [...messages].reverse().find((item) => item.role === "assistant");
-  function speak(text: string) { if ("speechSynthesis" in window) { window.speechSynthesis.cancel(); window.speechSynthesis.speak(new SpeechSynthesisUtterance(text)); } }
-  useEffect(()=>()=>{if(timerRef.current)clearInterval(timerRef.current);streamRef.current?.getTracks().forEach((track)=>track.stop());},[]);
-  async function startRecording(){
-    setAudioError("");setRecordedAudio(null);setAudioSeconds(0);
-    try{const stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true}}),mimeType=MediaRecorder.isTypeSupported("audio/webm;codecs=opus")?"audio/webm;codecs=opus":"audio/webm",recorder=new MediaRecorder(stream,{mimeType});streamRef.current=stream;recorderRef.current=recorder;chunksRef.current=[];recorder.ondataavailable=(event)=>{if(event.data.size)chunksRef.current.push(event.data);};recorder.onstop=()=>{setRecordedAudio(new Blob(chunksRef.current,{type:recorder.mimeType}));stream.getTracks().forEach((track)=>track.stop());streamRef.current=null;};recorder.start(500);setRecording(true);timerRef.current=setInterval(()=>setAudioSeconds((value)=>value+1),1000);}catch{setAudioError("无法使用麦克风，请允许浏览器访问麦克风后重试。");}
-  }
-  function stopRecording(){if(recorderRef.current?.state==="recording")recorderRef.current.stop();if(timerRef.current)clearInterval(timerRef.current);timerRef.current=null;setRecording(false);}
-  async function submit(event: FormEvent) { event.preventDefault(); if (!message.trim()) return; const ok = await mutate({ action: "english-coach", message }, "Coach 已给出反馈"); if (ok) setMessage(""); }
-  async function sendRecording(){if(!recordedAudio)return;setSendingAudio(true);setAudioError("");try{const wav=await audioBlobToWav(recordedAudio),form=new FormData();form.append("audio",new File([wav],"speaking.wav",{type:"audio/wav"}));if(message.trim())form.append("context",message.trim());const response=await fetch("/api/speaking-coach",{method:"POST",body:form});const result=await response.json() as {transcript?:string;error?:string};if(!response.ok)throw new Error(result.error);setMessage("");setRecordedAudio(null);setAudioSeconds(0);await onReload();}catch{setAudioError("Coach 暂时无法分析这段录音，请稍后重试。");}finally{setSendingAudio(false);}}
-  return <section className="english-coach"><div className="section-heading"><div><span className="eyebrow">English Coach</span><h3>对话、纠正与口语训练</h3></div>{latestReply && <button className="soft-button" onClick={() => speak(latestReply.text)}>▶ 播放回复</button>}</div><div className="chat-log">{messages.length ? messages.slice(-8).map((item) => <div key={item.id} className={`chat-bubble ${item.role}`}><b>{item.role === "user" ? "You" : "Coach"}</b><p>{item.text}</p>{item.feedback && <small>{item.feedback}</small>}</div>) : <div className="empty-list"><b>Start with one sentence.</b><p>Try: “This week, I want to…”</p></div>}</div><form className="coach-input" onSubmit={submit}><textarea value={message} onChange={(event) => setMessage(event.target.value)} placeholder="用英语输入，或录制一段口语…" /><div className="recording-controls"><div>{!recording?<button type="button" className="soft-button record-start" disabled={sendingAudio} onClick={startRecording}>● 开始录音</button>:<button type="button" className="soft-button record-stop" onClick={stopRecording}>■ 结束录音 · {audioSeconds}s</button>}{recordedAudio&&!recording&&<span className="audio-ready">录音已就绪 · {audioSeconds}s</span>}</div><div>{recordedAudio&&!recording&&<button type="button" className="soft-button" disabled={sendingAudio} onClick={()=>{setRecordedAudio(null);setAudioSeconds(0);}}>重新录制</button>}<button type={recordedAudio?"button":"submit"} className="primary-button" disabled={busy||sendingAudio||recording||(!recordedAudio&&!message.trim())} onClick={recordedAudio?sendRecording:undefined}>{sendingAudio?"Coach 分析中…":recordedAudio?"发送录音给 Coach":"发送给 Coach"}</button></div></div>{audioError&&<p className="audio-error" role="alert">{audioError}</p>}<small className="coach-note">录音只会在你点击“结束录音”后停止；发送后 Coach 会给出转写、表达建议和具体发音指导。</small></form></section>;
-}
-
 function OpenStreetFootprintMap({ items, selectedId, onSelect, onEdit }: { items: Footprint[]; selectedId: string; onSelect: (id: string) => void; onEdit: (item: Footprint) => void }) {
   const elementRef = useRef<HTMLDivElement>(null);
 
@@ -854,24 +720,6 @@ function FootprintDialog({ item, onClose, onSaved }: { item?: Footprint; onClose
   async function remove() { if (!item) return; setBusy(true); const response = await fetch(`/api/footprints?id=${encodeURIComponent(item.id)}`, { method: "DELETE" }); setBusy(false); if (response.ok) await onSaved(); }
   // eslint-disable-next-line jsx-a11y/label-has-associated-control
   return <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><form className="dialog footprint-dialog" onSubmit={submit}><button type="button" className="dialog-close" onClick={onClose}>×</button><span className="eyebrow">旅行足迹</span><h2>{item ? "编辑足迹" : "留下一个地方"}</h2><p>地点名称将用于 OpenStreetMap 定位并绘制区域。</p><label><span>地点</span><input required value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：京都，日本" /></label><label><span>状态</span><div className="duration-row"><button type="button" className={status === "visited" ? "active" : ""} onClick={() => setStatus("visited")}>已去过 · 点亮</button><button type="button" className={status === "wishlist" ? "active" : ""} onClick={() => setStatus("wishlist")}>未来想去</button></div></label>{status === "visited" && <label><span>到访日期</span><input type="date" required value={visitedAt} onChange={(event) => setVisitedAt(event.target.value)} /></label>}<label><span>足迹内容</span><textarea value={content} onChange={(event) => setContent(event.target.value)} placeholder="发生了什么？为什么记得这里？" /></label><label><span>上传图片（最多6张，每张不超过8MB）</span><input className="file-input" type="file" accept="image/*" multiple onChange={(event) => setFiles(Array.from(event.target.files ?? []).slice(0, 6))} />{files.length > 0 && <small className="file-note">已选择 {files.length} 张图片</small>}</label><div className="dialog-actions">{item ? <button type="button" className={confirmDelete ? "danger-button confirm" : "danger-button"} disabled={busy} onClick={() => confirmDelete ? remove() : setConfirmDelete(true)}>{confirmDelete ? "再次点击确认删除" : "删除足迹"}</button> : <span />}<button className="primary-button" disabled={busy}>{busy ? "正在保存…" : "保存足迹"}</button></div></form></div>;
-}
-
-function MemoPanel() {
-  const [memos,setMemos]=useState<Memo[]>([]),[wecomConfigured,setWecomConfigured]=useState(false),[editing,setEditing]=useState<Memo|"new"|null>(null),[newMemoTime,setNewMemoTime]=useState(""),[filter,setFilter]=useState<"pending"|"completed"|"all">("pending"),[busy,setBusy]=useState(false),[message,setMessage]=useState(""),[clock,setClock]=useState(() => new Date());
-  const load=useCallback(async()=>{const response=await fetch("/api/memos",{cache:"no-store"});if(!response.ok)return;const data=await response.json() as {memos:Memo[];wecomConfigured:boolean};setMemos(data.memos);setWecomConfigured(data.wecomConfigured);},[]);
-  useEffect(()=>{const initial=window.setTimeout(()=>void load(),0);const timer=window.setInterval(()=>{setClock(new Date());void load();},60000);return()=>{window.clearTimeout(initial);window.clearInterval(timer);};},[load]);
-  async function act(payload:Record<string,unknown>,success:string){setBusy(true);const response=await fetch("/api/memos",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(payload)});setBusy(false);if(!response.ok){const data=await response.json().catch(()=>({})) as {error?:string};setMessage(data.error==="wecom_not_configured"?"企业微信自建应用尚未配置。":data.error==="wecom_send_failed"?"企业微信消息发送失败，请检查应用凭证与接收成员账号。":"保存失败，请稍后重试。");return false;}await load();setMessage(success);window.setTimeout(()=>setMessage(""),2800);return true;}
-  const visible=memos.filter((item)=>filter==="all"||item.status===filter),pending=memos.filter((item)=>item.status==="pending").length;
-  return <><PageHeader kicker="重要的事，在合适的时间出现" title="备忘录"><button className="primary-button" onClick={()=>{setNewMemoTime(localDateTimeInput(new Date(Date.now()+3600000)));setEditing("new");}}>＋ 新增备忘</button></PageHeader>{message&&<div className="inline-notice" role="status">{message}</div>}<section className={`memo-channel ${wecomConfigured?"ready":"pending"}`}><div><span className="memo-channel-icon">企</span><div><b>{wecomConfigured?"企业微信消息已连接":"企业微信消息等待配置"}</b><p>{wecomConfigured?"到达设定时间后，wen flow 自建应用会直接向指定成员发送企业微信消息。":"需要配置企业微信自建应用的 CorpID、AgentID、Secret 和接收成员账号。"}</p></div></div>{wecomConfigured?<button className="soft-button" disabled={busy} onClick={()=>void act({action:"test-wecom"},"测试消息已发送，请查看企业微信")}>发送测试消息</button>:<a className="soft-link" href="https://work.weixin.qq.com/wework_admin/frame#apps" target="_blank" rel="noreferrer">打开企业微信后台</a>}</section><section className="memo-board"><div className="section-heading"><div><span className="eyebrow">时间清单</span><h3>{pending} 项待处理</h3></div><div className="memo-filters" aria-label="备忘录筛选">{([['pending','待处理'],['completed','已完成'],['all','全部']] as const).map(([key,label])=><button type="button" key={key} className={filter===key?"active":""} onClick={()=>setFilter(key)}>{label}</button>)}</div></div><div className="memo-list">{visible.map((item)=>{const due=new Date(item.remind_at),overdue=item.status==="pending"&&due.getTime()<clock.getTime(),delivery=memoDeliveryLabel(item);return <article key={item.id} className={`${item.status} ${overdue?"overdue":""}`}><button type="button" className="memo-check" aria-label={item.status==="completed"?"恢复待处理":"标记完成"} disabled={busy} onClick={()=>void act({action:"toggle",id:item.id},item.status==="completed"?"已恢复待处理":"备忘已完成")}>{item.status==="completed"?"✓":""}</button><div><div className="memo-title-row"><b>{item.title}</b><span className={`memo-delivery ${item.delivery_status}`}>{delivery}</span></div>{item.content&&<p>{item.content}</p>}<time>{overdue?"已到期 · ":""}{due.toLocaleString("zh-CN",{year:"numeric",month:"short",day:"numeric",hour:"2-digit",minute:"2-digit",hour12:false})}</time></div><button type="button" className="task-edit" onClick={()=>setEditing(item)}>编辑</button></article>;})}{!visible.length&&<div className="empty-list"><b>这里还没有备忘</b><p>添加一件事，并设置希望收到企业微信消息的时间。</p></div>}</div></section>{editing&&<MemoDialog memo={editing==="new"?undefined:editing} defaultRemindAt={newMemoTime} busy={busy} onClose={()=>setEditing(null)} onSave={async(values)=>{if(await act({action:"save",id:editing==="new"?undefined:editing.id,...values},editing==="new"?"备忘已创建":"备忘已更新"))setEditing(null);}} onDelete={editing==="new"?undefined:async()=>{if(await act({action:"delete",id:editing.id},"备忘已删除"))setEditing(null);}}/>}</>;
-}
-
-function memoDeliveryLabel(item:Memo){if(!item.wechat_enabled)return "仅备忘";if(item.delivery_status==="sent")return "企业微信已发送";if(item.delivery_status==="failed")return "发送失败";if(item.delivery_status==="sending")return "发送中";return "企业微信消息";}
-function localDateTimeInput(value:Date){return new Date(value.getTime()-value.getTimezoneOffset()*60000).toISOString().slice(0,16);}
-
-function MemoDialog({memo,defaultRemindAt,busy,onClose,onSave,onDelete}:{memo?:Memo;defaultRemindAt:string;busy:boolean;onClose:()=>void;onSave:(values:Record<string,unknown>)=>void;onDelete?:()=>void}){
-  const [title,setTitle]=useState(memo?.title??""),[content,setContent]=useState(memo?.content??""),[remindAt,setRemindAt]=useState(memo?localDateTimeInput(new Date(memo.remind_at)):defaultRemindAt),[wecomEnabled,setWecomEnabled]=useState(memo?Boolean(memo.wechat_enabled):true),[confirmDelete,setConfirmDelete]=useState(false);
-  // eslint-disable-next-line jsx-a11y/no-static-element-interactions
-  return <div className="dialog-backdrop" onMouseDown={(event)=>{if(event.target===event.currentTarget)onClose();}}><form className="dialog memo-dialog" onSubmit={(event)=>{event.preventDefault();onSave({title,content,remindAt:new Date(remindAt).toISOString(),wecomEnabled});}}><button type="button" className="dialog-close" onClick={onClose}>×</button><span className="eyebrow">备忘录</span><h2>{memo?"编辑备忘":"添加一件要记住的事"}</h2><p>设置提醒时间；开启企业微信消息后，到时会由 wen flow 自建应用直接发送。</p><label><span>标题</span><input required maxLength={120} value={title} onChange={(event)=>setTitle(event.target.value)} placeholder="例如：续费护照" /></label><label><span>详细内容（可选）</span><textarea maxLength={4000} value={content} onChange={(event)=>setContent(event.target.value)} placeholder="补充地址、材料或要做的步骤……" /></label><label><span>提醒时间</span><input required type="datetime-local" value={remindAt} onChange={(event)=>setRemindAt(event.target.value)} /></label><label className="check-field"><input type="checkbox" checked={wecomEnabled} onChange={(event)=>setWecomEnabled(event.target.checked)} /><span>到时发送企业微信消息</span></label><div className="dialog-actions">{onDelete?<button type="button" className={confirmDelete?"danger-button confirm":"danger-button"} disabled={busy} onClick={()=>confirmDelete?onDelete():setConfirmDelete(true)}>{confirmDelete?"再次点击确认删除":"删除备忘"}</button>:<span/>}<button className="primary-button" disabled={busy||!title.trim()}>{busy?"保存中…":"保存备忘"}</button></div></form></div>;
 }
 
 function Finance({ records,bills, busy, mutate }: { records: FinancialRecord[];bills:FinancialMonthlyBill[]; busy: boolean; mutate: (payload: Record<string, unknown>, success?: string) => Promise<boolean> }) {

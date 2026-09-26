@@ -265,19 +265,18 @@ export async function syncPlanningProgress(db:D1Database,userId:string,goalId:st
 
 export async function planningSnapshot(db:D1Database,userId:string) {
   const {localDate,weekStart,weekEnd,month}=executionPeriods();
-  const [stages,goals,tasks,types,plans,planGoals,instances,capacity,reports,records]=await Promise.all([
+  const [stages,goals,tasks,types,plans,planGoals,instances,capacity,reports]=await Promise.all([
     db.prepare("SELECT * FROM journey_stages_v2 WHERE user_id=? ORDER BY sort_order,created_at").bind(userId).all(),
     db.prepare("SELECT * FROM journey_goals_v2 WHERE user_id=? ORDER BY sort_order,created_at").bind(userId).all(),
     db.prepare("SELECT * FROM task_definitions_v2 WHERE user_id=? ORDER BY priority,created_at").bind(userId).all(),
     db.prepare("SELECT * FROM task_types_v2 WHERE user_id=? ORDER BY sort_order").bind(userId).all(),
     db.prepare("SELECT * FROM monthly_plans_v2 WHERE user_id=? ORDER BY period DESC").bind(userId).all(),
     db.prepare("SELECT * FROM monthly_plan_goals_v2 WHERE user_id=? ORDER BY priority,created_at").bind(userId).all(),
-    db.prepare("SELECT i.*,COALESCE(d.record_required,0) AS record_required,r.id AS record_id FROM task_instances_v2 i LEFT JOIN task_definitions_v2 d ON d.id=i.definition_id AND d.user_id=i.user_id LEFT JOIN planning_records_v2 r ON r.instance_id=i.id AND r.user_id=i.user_id WHERE i.user_id=? AND i.scheduled_date>=date(?,'start of month','-1 month') AND i.scheduled_date<=date(?,'start of month','+2 month','-1 day') ORDER BY i.scheduled_date,CASE WHEN i.scheduled_time='' THEN 1 ELSE 0 END,i.scheduled_time,i.priority,i.created_at").bind(userId,localDate,localDate).all(),
+    db.prepare("SELECT i.* FROM task_instances_v2 i WHERE i.user_id=? AND i.scheduled_date>=date(?,'start of month','-1 month') AND i.scheduled_date<=date(?,'start of month','+2 month','-1 day') ORDER BY i.scheduled_date,CASE WHEN i.scheduled_time='' THEN 1 ELSE 0 END,i.scheduled_time,i.priority,i.created_at").bind(userId,localDate,localDate).all(),
     db.prepare("SELECT * FROM weekly_capacity_days_v2 WHERE user_id=? ORDER BY weekday").bind(userId).all(),
     db.prepare("SELECT * FROM planning_reports_v2 WHERE user_id=? ORDER BY period DESC LIMIT 24").bind(userId).all(),
-    db.prepare("SELECT * FROM planning_records_v2 WHERE user_id=? ORDER BY recorded_at DESC,created_at DESC LIMIT 500").bind(userId).all(),
   ]);
-  return {stages:stages.results,goals:goals.results,tasks:tasks.results,taskTypes:types.results,monthlyPlans:plans.results,monthlyPlanGoals:planGoals.results,taskInstances:instances.results,capacityDays:capacity.results,reports:reports.results,records:records.results,calendar:{localDate,weekStart,weekEnd,month}};
+  return {stages:stages.results,goals:goals.results,tasks:tasks.results.map(({record_required: _legacy,...task})=>task),taskTypes:types.results,monthlyPlans:plans.results,monthlyPlanGoals:planGoals.results,taskInstances:instances.results,capacityDays:capacity.results,reports:reports.results,records:[],calendar:{localDate,weekStart,weekEnd,month}};
 }
 
 export function weekHealth(instances:Array<{scheduled_date:string;estimated_minutes:number;status:string;week_selected?:number}>,capacityDays:Array<{available:number;minutes:number}>,weekStart:string,weekEnd:string,fallback=420) {

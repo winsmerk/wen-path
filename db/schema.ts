@@ -223,3 +223,5 @@ export const weeklyCapacityDaysV2 = sqliteTable("weekly_capacity_days_v2", {
 export const planningReportsV2 = sqliteTable("planning_reports_v2", {
   id:text("id").primaryKey(),userId:text("user_id").notNull(),reportType:text("report_type").notNull(),period:text("period").notNull(),status:text("status").notNull().default("final"),summaryJson:text("summary_json").notNull(),generatedAt:text("generated_at").notNull(),updatedAt:text("updated_at").notNull(),
 },(table)=>[uniqueIndex("idx_reports_v2_period").on(table.userId,table.reportType,table.period)]);
+
+export * from "./content-schema";

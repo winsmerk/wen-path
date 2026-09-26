@@ -254,6 +254,7 @@ export async function POST(request: Request) {
   if (!context) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   const { db, identity } = context;
   const body = (await request.json()) as Record<string, unknown>;
+  if (["complete-task","english-coach","checkin"].includes(String(body.action))) return NextResponse.json({error:"此关联记录/工具入口已停用"},{status:410});
   const now = new Date().toISOString();
   const periods=executionPeriods();
   const activeCycleId=`${identity.userId}-week-${periods.weekStart}`;
