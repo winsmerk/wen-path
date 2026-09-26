@@ -1,7 +1,6 @@
 "use client";
 
 import { FormEvent, useState } from "react";
-import { workRoutines } from "@/lib/work-routines";
 import { dailySuShiQuote } from "@/lib/su-shi-quotes";
 
 export type Stage={id:string;title:string;objective:string;status:"planned"|"active"|"completed"|"paused";sort_order:number;start_date:string|null;end_date:string|null};
@@ -26,22 +25,12 @@ const completionDateLabel=(value:string)=>new Date(`${value}T00:00:00`).toLocale
 const taskModeLabel=(task?:TaskDefinition,source?:string)=>source==="manual"?"手动任务":!task?"模式未设置":task.mode==="once"?"单次任务":`周期任务 · ${task.frequency==="daily"?"每天":task.frequency==="weekly"?"每周":"每月"} ${task.occurrences} 次`;
 function safeList(value:string){try{const result=JSON.parse(value);return Array.isArray(result)?result:[];}catch{return [];}}
 
-export function PlanningToday({data,busy,mutate,onRecordsChanged,onNavigate}:{data:PlanningData;busy:boolean;mutate:PlanningMutate;onRecordsChanged:()=>Promise<void>;onNavigate:(tab:"records"|"journey"|"plan")=>void}){
-  const [workFilter,setWorkFilter]=useState<string>(""),[overseasDay,setOverseasDay]=useState(1);
-  const monthPlan=data.monthlyPlans.find((plan)=>plan.period===data.calendar.month);
-  const enrolled=workRoutines.every((routine)=>data.tasks.some((task)=>task.type_key===routine.key&&data.monthlyPlanGoals.some((link)=>link.plan_id===monthPlan?.id&&link.goal_id===task.goal_id)));
-  const visibleWork=data.taskInstances.filter((item)=>item.type_key===workFilter&&item.week_selected!==0&&(workFilter==="kinikini"?item.status!=="completed":workFilter==="overseas"?item.scheduled_date>=data.calendar.weekStart&&item.scheduled_date<=data.calendar.weekEnd:item.scheduled_date===data.calendar.localDate)).sort(compareTasks);
+export function PlanningToday({data,busy,mutate,onRecordsChanged}:{data:PlanningData;busy:boolean;mutate:PlanningMutate;onRecordsChanged:()=>Promise<void>}){
   const today=data.taskInstances.filter((item)=>item.scheduled_date===data.calendar.localDate&&item.week_selected!==0).sort(compareTasks);
   const week=data.taskInstances.filter((item)=>item.scheduled_date>=data.calendar.weekStart&&item.scheduled_date<=data.calendar.weekEnd&&item.status!=="completed"&&item.week_selected!==0).sort(compareTasks);
   const configured=data.capacityDays.reduce((sum,item)=>sum+(item.available?item.minutes:0),0)||420,planned=week.reduce((sum,item)=>sum+item.estimated_minutes,0),load=Math.round(planned/configured*100),health=load<=80?"健康":load<=100?"偏满":load<=120?"超额":"严重超额",quote=dailySuShiQuote(data.calendar.localDate);
   return <>
     <header className="page-header today-intro"><div><p>今天，把重要的事落到行动里</p></div><div className={`load-badge load-${health}`}>{health} · {load}%</div></header>
-    <section className="workbench-panel" aria-label="日常工作入口">
-      <div className="panel-heading"><div><span className="eyebrow">{data.calendar.localDate}</span><h2>今天的工作台</h2></div><button className="soft-button" onClick={()=>onNavigate("records")}>查看成果记录</button></div>
-      <div className="workbench-routines">{workRoutines.map((routine)=>{const scope=data.taskInstances.filter((item)=>item.type_key===routine.key&&item.week_selected!==0&&(routine.frequency==="daily"?item.scheduled_date===data.calendar.localDate:item.scheduled_date>=data.calendar.weekStart&&item.scheduled_date<=data.calendar.weekEnd));return <button key={routine.key} className={`workbench-routine ${workFilter===routine.key?"selected":""}`} aria-pressed={workFilter===routine.key} onClick={()=>setWorkFilter(workFilter===routine.key?"":routine.key)}><span className="type-token" style={{background:routine.color}}>{routine.icon}</span><strong>{routine.name}</strong><small>{routine.frequency==="daily"?"今日":routine.frequency==="weekly"?"本周":"项目下一步"} · {scope.length?`${scope.filter((item)=>item.status==="completed").length}/${scope.length} 完成`:"待安排"}</small><p>{routine.description}</p></button>;})}</div>
-      {!enrolled&&<div className="workbench-setup"><p>将五类工作加入本月计划。从今天起安排每日任务；时间与预计耗时可在计划中调整。</p><label>海外内容安排在 <select aria-label="海外内容每周执行日" value={overseasDay} onChange={(event)=>setOverseasDay(Number(event.target.value))}>{weekdays.map((day,index)=><option key={day} value={index+1}>{day}</option>)}</select></label><button className="primary-button" disabled={busy} onClick={()=>mutate({action:"enroll-work-routines",weekday:overseasDay},"五类工作已加入本月计划")}>{busy?"正在安排…":"加入本月计划"}</button></div>}
-      {workFilter&&<div className="workbench-detail"><div className="panel-heading"><h3>{workRoutines.find((item)=>item.key===workFilter)?.name}</h3><button className="soft-button" onClick={()=>onNavigate(workFilter==="kinikini"?"journey":"plan")}>管理计划</button></div>{visibleWork.length?visibleWork.map((item)=><InstanceRow key={item.id} item={item} data={data} busy={busy} mutate={mutate} onRecordsChanged={onRecordsChanged}/>):<p>当前没有已安排的任务。可在计划中查看、加入本周或调整日期。</p>}{workFilter==="kinikini"&&<p className="record-hint">关联项目：kinikini2.0。此处记录本轮行动，尚未自动读取项目执行进度。</p>}</div>}
-    </section>
     <section className="daily-poetry" aria-label="苏东坡每日一句"><span className="poetry-seal">苏</span><div><small>苏东坡 · 每日一句</small><blockquote>“{quote.text}”</blockquote><cite>—— 苏轼 {quote.source}</cite></div></section>
     <section className="today-planning-grid">
       <div className="planning-panel"><div className="panel-heading"><div><span className="eyebrow">今天</span><h3>{today.length} 项待办</h3></div><span>{today.filter((item)=>item.status==="completed").length}/{today.length} 完成</span></div>

@@ -263,7 +263,7 @@ export default function LifeOS() {
       <main className="main-content">
         {notice && <div className="toast" role="status">{notice}</div>}
         <MobileHeader />
-        {tab === "today" && <PlanningToday data={planning} busy={saving} mutate={mutatePlanning} onRecordsChanged={load} onNavigate={setTab}/>}
+        {tab === "today" && <PlanningToday data={planning} busy={saving} mutate={mutatePlanning} onRecordsChanged={load}/>}
         {tab === "vision" && <Vision profile={workspace.profile} planning={planning} busy={saving} mutate={mutate} />}
         {tab === "journey" && <JourneyManager data={planning} busy={saving} mutate={mutatePlanning}/>}
         {tab === "plan" && <PlanManager data={planning} busy={saving} mutate={mutatePlanning} onRecordsChanged={load}/>}
